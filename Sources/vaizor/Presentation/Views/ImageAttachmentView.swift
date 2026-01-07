@@ -35,15 +35,3 @@ struct ImageAttachmentView: View {
         }
     }
 }
-
-// Extension to handle image URLs in markdown
-extension MessageAttachment {
-    var isImage: Bool {
-        guard let mimeType = mimeType else { return false }
-        return mimeType.hasPrefix("image/")
-    }
-
-    var nsImage: NSImage? {
-        NSImage(data: data)
-    }
-}
