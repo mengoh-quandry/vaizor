@@ -278,6 +278,93 @@ struct SecurityEvent: Identifiable, Codable {
     }
 }
 
+/// Login item information
+struct LoginItemInfo: Identifiable, Codable {
+    let id: UUID
+    let name: String
+    let path: String
+    let isHidden: Bool
+    let isSuspicious: Bool
+    let reason: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        path: String,
+        isHidden: Bool = false,
+        isSuspicious: Bool = false,
+        reason: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.path = path
+        self.isHidden = isHidden
+        self.isSuspicious = isSuspicious
+        self.reason = reason
+    }
+}
+
+/// Network connection information
+struct NetworkConnectionInfo: Identifiable, Codable {
+    let id: UUID
+    let processName: String
+    let pid: Int32
+    let localAddress: String
+    let remoteAddress: String
+    let remotePort: UInt16
+    let state: String
+    let isSuspicious: Bool
+    let reason: String?
+
+    init(
+        id: UUID = UUID(),
+        processName: String,
+        pid: Int32,
+        localAddress: String,
+        remoteAddress: String,
+        remotePort: UInt16,
+        state: String,
+        isSuspicious: Bool = false,
+        reason: String? = nil
+    ) {
+        self.id = id
+        self.processName = processName
+        self.pid = pid
+        self.localAddress = localAddress
+        self.remoteAddress = remoteAddress
+        self.remotePort = remotePort
+        self.state = state
+        self.isSuspicious = isSuspicious
+        self.reason = reason
+    }
+}
+
+/// Kernel extension information
+struct KernelExtensionInfo: Identifiable, Codable {
+    let id: UUID
+    let name: String
+    let version: String
+    let loadAddress: String
+    let isSuspicious: Bool
+    let reason: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        version: String = "",
+        loadAddress: String = "",
+        isSuspicious: Bool = false,
+        reason: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.loadAddress = loadAddress
+        self.isSuspicious = isSuspicious
+        self.reason = reason
+    }
+}
+
 /// Complete host security report
 struct HostSecurityReport: Codable {
     let timestamp: Date
@@ -285,8 +372,15 @@ struct HostSecurityReport: Codable {
     var diskEncrypted: Bool
     var gatekeeperEnabled: Bool
     var systemIntegrityProtection: Bool
+    var xprotectVersion: String?
+    var secureBootEnabled: Bool?  // nil on Intel Macs
+    var remoteLoginEnabled: Bool
+    var softwareUpdatesPending: Int
     var suspiciousProcesses: [ProcessInfo]
     var openPorts: [PortInfo]
+    var loginItems: [LoginItemInfo]
+    var activeConnections: [NetworkConnectionInfo]
+    var kernelExtensions: [KernelExtensionInfo]
     var recentSecurityEvents: [SecurityEvent]
     var overallThreatLevel: ThreatLevel
     var recommendations: [String]
@@ -297,8 +391,15 @@ struct HostSecurityReport: Codable {
         diskEncrypted: Bool = false,
         gatekeeperEnabled: Bool = false,
         systemIntegrityProtection: Bool = false,
+        xprotectVersion: String? = nil,
+        secureBootEnabled: Bool? = nil,
+        remoteLoginEnabled: Bool = false,
+        softwareUpdatesPending: Int = 0,
         suspiciousProcesses: [ProcessInfo] = [],
         openPorts: [PortInfo] = [],
+        loginItems: [LoginItemInfo] = [],
+        activeConnections: [NetworkConnectionInfo] = [],
+        kernelExtensions: [KernelExtensionInfo] = [],
         recentSecurityEvents: [SecurityEvent] = [],
         overallThreatLevel: ThreatLevel = .normal,
         recommendations: [String] = []
@@ -308,8 +409,15 @@ struct HostSecurityReport: Codable {
         self.diskEncrypted = diskEncrypted
         self.gatekeeperEnabled = gatekeeperEnabled
         self.systemIntegrityProtection = systemIntegrityProtection
+        self.xprotectVersion = xprotectVersion
+        self.secureBootEnabled = secureBootEnabled
+        self.remoteLoginEnabled = remoteLoginEnabled
+        self.softwareUpdatesPending = softwareUpdatesPending
         self.suspiciousProcesses = suspiciousProcesses
         self.openPorts = openPorts
+        self.loginItems = loginItems
+        self.activeConnections = activeConnections
+        self.kernelExtensions = kernelExtensions
         self.recentSecurityEvents = recentSecurityEvents
         self.overallThreatLevel = overallThreatLevel
         self.recommendations = recommendations
@@ -726,47 +834,110 @@ final class AiEDRService: ObservableObject {
         var recommendations: [String] = []
         var overallThreat: ThreatLevel = .normal
 
-        // Check firewall status
-        report.firewallEnabled = await checkFirewallStatus()
+        // Run independent checks in parallel for better performance
+        async let firewallTask = checkFirewallStatus()
+        async let fileVaultTask = checkFileVaultStatus()
+        async let gatekeeperTask = checkGatekeeperStatus()
+        async let sipTask = checkSIPStatus()
+        async let xprotectTask = checkXProtectVersion()
+        async let secureBootTask = checkSecureBootStatus()
+        async let remoteLoginTask = checkRemoteLoginStatus()
+        async let updatesTask = checkSoftwareUpdates()
+        async let processesTask = findSuspiciousProcesses()
+        async let portsTask = findOpenPorts()
+        async let loginItemsTask = findLoginItems()
+        async let connectionsTask = findActiveConnections()
+        async let kextsTask = findKernelExtensions()
+
+        // Collect results
+        report.firewallEnabled = await firewallTask
+        report.diskEncrypted = await fileVaultTask
+        report.gatekeeperEnabled = await gatekeeperTask
+        report.systemIntegrityProtection = await sipTask
+        report.xprotectVersion = await xprotectTask
+        report.secureBootEnabled = await secureBootTask
+        report.remoteLoginEnabled = await remoteLoginTask
+        report.softwareUpdatesPending = await updatesTask
+        report.suspiciousProcesses = await processesTask
+        report.openPorts = await portsTask
+        report.loginItems = await loginItemsTask
+        report.activeConnections = await connectionsTask
+        report.kernelExtensions = await kextsTask
+
+        // Evaluate firewall
         if !report.firewallEnabled {
-            recommendations.append("Enable macOS Firewall in System Preferences > Security & Privacy")
+            recommendations.append("Enable macOS Firewall in System Settings > Network > Firewall")
             overallThreat = max(overallThreat, .elevated)
         }
 
-        // Check FileVault (disk encryption)
-        report.diskEncrypted = await checkFileVaultStatus()
+        // Evaluate FileVault (disk encryption)
         if !report.diskEncrypted {
-            recommendations.append("Enable FileVault disk encryption in System Preferences > Security & Privacy")
+            recommendations.append("Enable FileVault disk encryption in System Settings > Privacy & Security")
             overallThreat = max(overallThreat, .high)
         }
 
-        // Check Gatekeeper
-        report.gatekeeperEnabled = await checkGatekeeperStatus()
+        // Evaluate Gatekeeper
         if !report.gatekeeperEnabled {
             recommendations.append("Enable Gatekeeper: sudo spctl --master-enable")
             overallThreat = max(overallThreat, .elevated)
         }
 
-        // Check SIP
-        report.systemIntegrityProtection = await checkSIPStatus()
+        // Evaluate SIP
         if !report.systemIntegrityProtection {
-            recommendations.append("System Integrity Protection is disabled - this is a security risk")
-            overallThreat = max(overallThreat, .high)
+            recommendations.append("System Integrity Protection is disabled - this is a critical security risk")
+            overallThreat = max(overallThreat, .critical)
         }
 
-        // Check for suspicious processes
-        report.suspiciousProcesses = await findSuspiciousProcesses()
+        // Evaluate Secure Boot (Apple Silicon only)
+        if let secureBoot = report.secureBootEnabled, !secureBoot {
+            recommendations.append("Secure Boot is not at full security - review startup security settings")
+            overallThreat = max(overallThreat, .elevated)
+        }
+
+        // Evaluate Remote Login
+        if report.remoteLoginEnabled {
+            recommendations.append("Remote Login (SSH) is enabled - ensure this is intentional")
+            overallThreat = max(overallThreat, .elevated)
+        }
+
+        // Evaluate Software Updates
+        if report.softwareUpdatesPending > 0 {
+            recommendations.append("Install \(report.softwareUpdatesPending) pending software update(s) for security patches")
+            overallThreat = max(overallThreat, .elevated)
+        }
+
+        // Evaluate suspicious processes
         if !report.suspiciousProcesses.isEmpty {
             recommendations.append("Review suspicious processes: \(report.suspiciousProcesses.map { $0.name }.joined(separator: ", "))")
             overallThreat = max(overallThreat, .high)
         }
 
-        // Check open ports
-        report.openPorts = await findOpenPorts()
+        // Evaluate open ports
         let suspiciousPorts = report.openPorts.filter { $0.isSuspicious }
         if !suspiciousPorts.isEmpty {
             recommendations.append("Review suspicious open ports: \(suspiciousPorts.map { String($0.port) }.joined(separator: ", "))")
             overallThreat = max(overallThreat, .elevated)
+        }
+
+        // Evaluate login items
+        let suspiciousLoginItems = report.loginItems.filter { $0.isSuspicious }
+        if !suspiciousLoginItems.isEmpty {
+            recommendations.append("Review suspicious login items: \(suspiciousLoginItems.map { $0.name }.joined(separator: ", "))")
+            overallThreat = max(overallThreat, .high)
+        }
+
+        // Evaluate network connections
+        let suspiciousConnections = report.activeConnections.filter { $0.isSuspicious }
+        if !suspiciousConnections.isEmpty {
+            recommendations.append("Review suspicious outbound connections to: \(suspiciousConnections.map { $0.remoteAddress }.joined(separator: ", "))")
+            overallThreat = max(overallThreat, .high)
+        }
+
+        // Evaluate kernel extensions
+        let suspiciousKexts = report.kernelExtensions.filter { $0.isSuspicious }
+        if !suspiciousKexts.isEmpty {
+            recommendations.append("Review suspicious kernel extensions: \(suspiciousKexts.map { $0.name }.joined(separator: ", "))")
+            overallThreat = max(overallThreat, .critical)
         }
 
         report.overallThreatLevel = overallThreat
@@ -785,8 +956,15 @@ final class AiEDRService: ObservableObject {
                 "filevault": report.diskEncrypted ? "enabled" : "disabled",
                 "gatekeeper": report.gatekeeperEnabled ? "enabled" : "disabled",
                 "sip": report.systemIntegrityProtection ? "enabled" : "disabled",
+                "xprotect": report.xprotectVersion ?? "unknown",
+                "secureBoot": report.secureBootEnabled.map { $0 ? "enabled" : "reduced" } ?? "n/a",
+                "remoteLogin": report.remoteLoginEnabled ? "enabled" : "disabled",
+                "pendingUpdates": "\(report.softwareUpdatesPending)",
                 "suspiciousProcesses": "\(report.suspiciousProcesses.count)",
-                "openPorts": "\(report.openPorts.count)"
+                "openPorts": "\(report.openPorts.count)",
+                "loginItems": "\(report.loginItems.count)",
+                "activeConnections": "\(report.activeConnections.count)",
+                "kernelExtensions": "\(report.kernelExtensions.count)"
             ]
         )
         addAuditEntry(auditEntry)
@@ -1131,6 +1309,257 @@ final class AiEDRService: ObservableObject {
         }
 
         return ports
+    }
+
+    private func checkXProtectVersion() async -> String? {
+        // Check XProtect version from system profiler
+        guard let output = await runCommand(
+            executable: "/usr/sbin/system_profiler",
+            arguments: ["SPInstallHistoryDataType", "-json"],
+            timeout: 30
+        ) else { return nil }
+
+        // Look for XProtect in the output
+        if let data = output.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let installHistory = json["SPInstallHistoryDataType"] as? [[String: Any]] {
+            // Find most recent XProtect update
+            for item in installHistory {
+                if let name = item["_name"] as? String,
+                   name.lowercased().contains("xprotect"),
+                   let version = item["package_version"] as? String {
+                    return version
+                }
+            }
+        }
+
+        // Fallback: check plist directly
+        guard let plistOutput = await runCommand(
+            executable: "/usr/bin/defaults",
+            arguments: ["read", "/System/Library/CoreServices/XProtect.bundle/Contents/version", "CFBundleShortVersionString"],
+            timeout: 5
+        ) else { return nil }
+
+        let version = plistOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        return version.isEmpty ? nil : version
+    }
+
+    private func checkSecureBootStatus() async -> Bool? {
+        // Check if running on Apple Silicon first
+        guard let archOutput = await runCommand(
+            executable: "/usr/bin/uname",
+            arguments: ["-m"],
+            timeout: 5
+        ) else { return nil }
+
+        let arch = archOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard arch == "arm64" else {
+            // Intel Mac - secure boot not applicable
+            return nil
+        }
+
+        // Check startup security utility (requires admin, may fail)
+        guard let output = await runCommand(
+            executable: "/usr/sbin/bputil",
+            arguments: ["-d"],
+            timeout: 10
+        ) else {
+            // bputil not available or requires sudo
+            return nil
+        }
+
+        // Full security mode shows "Secure Boot: Full Security"
+        return output.lowercased().contains("full security")
+    }
+
+    private func checkRemoteLoginStatus() async -> Bool {
+        guard let output = await runCommand(
+            executable: "/usr/sbin/systemsetup",
+            arguments: ["-getremotelogin"],
+            timeout: 10
+        ) else { return false }
+
+        return output.lowercased().contains("on")
+    }
+
+    private func checkSoftwareUpdates() async -> Int {
+        guard let output = await runCommand(
+            executable: "/usr/sbin/softwareupdate",
+            arguments: ["-l"],
+            timeout: 60  // Software update check can be slow
+        ) else { return 0 }
+
+        // Count lines that look like available updates
+        let lines = output.split(separator: "\n")
+        var updateCount = 0
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // Updates are listed with * prefix
+            if trimmed.hasPrefix("*") || trimmed.contains("Label:") {
+                updateCount += 1
+            }
+        }
+
+        return updateCount
+    }
+
+    private func findLoginItems() async -> [LoginItemInfo] {
+        // Use osascript to get login items
+        guard let output = await runCommand(
+            executable: "/usr/bin/osascript",
+            arguments: ["-e", "tell application \"System Events\" to get the name of every login item"],
+            timeout: 10
+        ) else { return [] }
+
+        var items: [LoginItemInfo] = []
+        let names = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // Known suspicious login item patterns
+        let suspiciousPatterns = [
+            "miner", "cryptominer", "xmrig",
+            "backdoor", "trojan", "malware",
+            "adload", "shlayer", "bundlore"
+        ]
+
+        for name in names where !name.isEmpty {
+            let nameLower = name.lowercased()
+            let isSuspicious = suspiciousPatterns.contains { nameLower.contains($0) }
+
+            let item = LoginItemInfo(
+                name: name,
+                path: "",
+                isSuspicious: isSuspicious,
+                reason: isSuspicious ? "Matches known malware pattern" : nil
+            )
+            items.append(item)
+        }
+
+        return items
+    }
+
+    private func findActiveConnections() async -> [NetworkConnectionInfo] {
+        guard let output = await runCommand(
+            executable: "/usr/sbin/netstat",
+            arguments: ["-anp", "tcp"],
+            timeout: 15
+        ) else { return [] }
+
+        var connections: [NetworkConnectionInfo] = []
+        let lines = output.split(separator: "\n").dropFirst(2) // Skip headers
+
+        // Suspicious remote ports (common C2 ports)
+        let suspiciousPorts: Set<UInt16> = [
+            4444, 5555, 6666, 31337, 1337,  // Classic backdoors
+            8080, 8443,  // Proxy/C2
+            6667, 6697,  // IRC (common for botnets)
+            9001, 9050, 9150,  // Tor
+        ]
+
+        // Suspicious IP ranges (simplified check)
+        let suspiciousIPPrefixes = [
+            "185.220.",  // Known Tor exit nodes
+            "89.248.",   // Known malicious hosting
+        ]
+
+        for line in lines {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 5 else { continue }
+
+            let localAddr = String(parts[3])
+            let remoteAddr = String(parts[4])
+            let state = String(parts[5])
+
+            // Only interested in ESTABLISHED connections
+            guard state == "ESTABLISHED" else { continue }
+
+            // Parse remote address and port
+            if let lastDot = remoteAddr.lastIndex(of: ".") {
+                let ipPart = String(remoteAddr[..<lastDot])
+                let portPart = String(remoteAddr[remoteAddr.index(after: lastDot)...])
+
+                guard let port = UInt16(portPart), port > 0 else { continue }
+
+                // Check if suspicious
+                var isSuspicious = suspiciousPorts.contains(port)
+                var reason: String? = nil
+
+                if suspiciousPorts.contains(port) {
+                    reason = "Connection to suspicious port \(port)"
+                    isSuspicious = true
+                }
+
+                for prefix in suspiciousIPPrefixes {
+                    if ipPart.hasPrefix(prefix) {
+                        reason = "Connection to suspicious IP range"
+                        isSuspicious = true
+                        break
+                    }
+                }
+
+                let connection = NetworkConnectionInfo(
+                    processName: "unknown",  // netstat doesn't show process easily
+                    pid: 0,
+                    localAddress: localAddr,
+                    remoteAddress: ipPart,
+                    remotePort: port,
+                    state: state,
+                    isSuspicious: isSuspicious,
+                    reason: reason
+                )
+                connections.append(connection)
+            }
+        }
+
+        return connections
+    }
+
+    private func findKernelExtensions() async -> [KernelExtensionInfo] {
+        guard let output = await runCommand(
+            executable: "/usr/sbin/kextstat",
+            arguments: ["-l"],
+            timeout: 10
+        ) else { return [] }
+
+        var extensions: [KernelExtensionInfo] = []
+        let lines = output.split(separator: "\n").dropFirst() // Skip header
+
+        // Known legitimate Apple kexts to ignore
+        let appleKextPrefixes = ["com.apple.", "com.cisco.", "com.vmware."]
+
+        // Known suspicious kext patterns
+        let suspiciousPatterns = [
+            "keylogger", "rootkit", "backdoor",
+            "miner", "coinminer", "inject"
+        ]
+
+        for line in lines {
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 6 else { continue }
+
+            let name = String(parts[5])
+            let version = parts.count > 6 ? String(parts[6]).replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "") : ""
+
+            // Skip Apple kexts
+            if appleKextPrefixes.contains(where: { name.hasPrefix($0) }) {
+                continue
+            }
+
+            let nameLower = name.lowercased()
+            let isSuspicious = suspiciousPatterns.contains { nameLower.contains($0) }
+
+            let kext = KernelExtensionInfo(
+                name: name,
+                version: version,
+                isSuspicious: isSuspicious,
+                reason: isSuspicious ? "Matches suspicious pattern" : nil
+            )
+            extensions.append(kext)
+        }
+
+        return extensions
     }
 
     // MARK: - Persistence
