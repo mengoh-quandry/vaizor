@@ -34,6 +34,14 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-Xfrontend", "-warn-concurrency"], .when(configuration: .debug))
             ]
+        ),
+        .testTarget(
+            name: "vaizorTests",
+            dependencies: [
+                "vaizor",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Tests/vaizorTests"
         )
     ]
 )

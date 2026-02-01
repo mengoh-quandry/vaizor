@@ -10,7 +10,7 @@ struct MessageActionRow: View {
     let onRegenerate: (() -> Void)?
     let onRegenerateDifferent: (() -> Void)?
     let onScrollToTop: (() -> Void)?
-    
+
     var body: some View {
         Group {
             HStack(spacing: 8) {
@@ -25,8 +25,9 @@ struct MessageActionRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Edit")
+                        .accessibilityLabel("Edit message")
                     }
-                    
+
                     Button {
                         onCopy()
                     } label: {
@@ -35,7 +36,8 @@ struct MessageActionRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Copy")
-                    
+                    .accessibilityLabel("Copy message to clipboard")
+
                     Button {
                         onDelete()
                     } label: {
@@ -44,13 +46,15 @@ struct MessageActionRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Undo (Delete message and response)")
-                    
+                    .accessibilityLabel("Delete message and response")
+
                     // Prompt enhancement indicator
                     if isPromptEnhanced {
                         Image(systemName: "sparkles")
                             .font(.caption)
                             .foregroundStyle(Color(hex: "00976d"))
                             .help("Prompt enhanced")
+                            .accessibilityLabel("Prompt was enhanced")
                     }
                 } else {
                     // Assistant message actions
@@ -62,7 +66,8 @@ struct MessageActionRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Copy")
-                    
+                    .accessibilityLabel("Copy response to clipboard")
+
                     if let onScrollToTop = onScrollToTop {
                         Button {
                             onScrollToTop()
@@ -72,8 +77,9 @@ struct MessageActionRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Go to Top of Response")
+                        .accessibilityLabel("Scroll to top of response")
                     }
-                    
+
                     if let onRegenerate = onRegenerate {
                         Button {
                             onRegenerate()
@@ -83,8 +89,9 @@ struct MessageActionRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Regenerate")
+                        .accessibilityLabel("Regenerate response")
                     }
-                    
+
                     if let onRegenerateDifferent = onRegenerateDifferent {
                         Button {
                             onRegenerateDifferent()
@@ -94,8 +101,9 @@ struct MessageActionRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Regenerate with Different Model")
+                        .accessibilityLabel("Regenerate with different model")
                     }
-                    
+
                     Button {
                         onDelete()
                     } label: {
@@ -104,6 +112,7 @@ struct MessageActionRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Delete Response")
+                    .accessibilityLabel("Delete response")
                 }
             }
             .padding(.horizontal, 8)
@@ -112,5 +121,7 @@ struct MessageActionRow: View {
             .cornerRadius(8)
             .transition(.opacity.combined(with: .scale))
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Message actions")
     }
 }

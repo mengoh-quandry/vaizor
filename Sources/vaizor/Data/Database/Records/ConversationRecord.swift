@@ -13,6 +13,7 @@ struct ConversationRecord: Codable, FetchableRecord, PersistableRecord {
     var selectedProvider: String?
     var selectedModel: String?
     var folderId: String?
+    var projectId: String?
     var tags: String? // JSON array
     var isFavorite: Bool
 
@@ -27,6 +28,7 @@ struct ConversationRecord: Codable, FetchableRecord, PersistableRecord {
         case selectedProvider = "selected_provider"
         case selectedModel = "selected_model"
         case folderId = "folder_id"
+        case projectId = "project_id"
         case tags
         case isFavorite = "is_favorite"
     }

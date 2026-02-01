@@ -126,14 +126,15 @@ struct MermaidDiagramView: View {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&#39;")
-        
+
+        // SECURITY: Use bundled mermaid.min.js only (no CDN)
         return """
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+            <script src="js/mermaid.min.js"></script>
             <style>
                 body {
                     margin: 0;
@@ -158,7 +159,7 @@ struct MermaidDiagramView: View {
         \(encodedCode)
             </div>
             <script>
-                mermaid.initialize({ 
+                mermaid.initialize({
                     startOnLoad: true,
                     theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
                     securityLevel: 'loose',
@@ -192,14 +193,17 @@ struct ExcalidrawView: View {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "${", with: "\\${")
-        
+
+        // SECURITY: Use bundled React, ReactDOM, and Excalidraw only (no CDN)
         return """
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <script src="https://cdn.jsdelivr.net/npm/@excalidraw/excalidraw@latest/dist/index.umd.js"></script>
+            <script src="js/react.min.js"></script>
+            <script src="js/react-dom.min.js"></script>
+            <script src="js/excalidraw.min.js"></script>
             <style>
                 body {
                     margin: 0;
@@ -216,6 +220,11 @@ struct ExcalidrawView: View {
                     height: 100vh;
                     min-height: 500px;
                 }
+                .error-message {
+                    padding: 20px;
+                    color: #ff6b6b;
+                    font-family: -apple-system, sans-serif;
+                }
             </style>
         </head>
         <body>
@@ -231,12 +240,12 @@ struct ExcalidrawView: View {
                             files: data.files || {}
                         });
                     } else {
-                        document.getElementById('excalidraw-container').innerHTML = 
-                            '<div style="padding: 20px;">Excalidraw library loading...</div>';
+                        document.getElementById('excalidraw-container').innerHTML =
+                            '<div class="error-message">Excalidraw library not loaded</div>';
                     }
                 } catch (error) {
-                    document.getElementById('excalidraw-container').innerHTML = 
-                        '<div style="padding: 20px; color: red;">Error loading Excalidraw: ' + error.message + '</div>';
+                    document.getElementById('excalidraw-container').innerHTML =
+                        '<div class="error-message">Error loading Excalidraw: ' + error.message + '</div>';
                 }
             </script>
         </body>
@@ -306,41 +315,126 @@ struct SVGView: View {
 struct VisualizationWebView: NSViewRepresentable {
     let html: String
     let messageId: UUID
-    
+
+    // MARK: - Bundled JS Path Discovery
+
+    /// Path to bundled JavaScript libraries
+    static var bundledJSPath: URL? = {
+        // Check app bundle Resources/js
+        if let bundlePath = Bundle.main.resourceURL?.appendingPathComponent("js") {
+            if FileManager.default.fileExists(atPath: bundlePath.path) {
+                return bundlePath
+            }
+        }
+
+        // Check Resources/js in development
+        let devPath = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent() // Views
+            .deletingLastPathComponent() // Presentation
+            .deletingLastPathComponent() // vaizor
+            .deletingLastPathComponent() // Sources
+            .appendingPathComponent("Resources/js")
+
+        if FileManager.default.fileExists(atPath: devPath.path) {
+            return devPath
+        }
+
+        return nil
+    }()
+
+    /// Check if bundled libraries are available
+    static var hasBundledLibraries: Bool {
+        guard let jsPath = bundledJSPath else { return false }
+        let requiredFiles = ["mermaid.min.js", "react.min.js", "react-dom.min.js", "excalidraw.min.js"]
+        return requiredFiles.allSatisfy { file in
+            FileManager.default.fileExists(atPath: jsPath.appendingPathComponent(file).path)
+        }
+    }
+
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        if #available(macOS 11.0, *) {
-            // Use modern API
-            config.defaultWebpagePreferences.allowsContentJavaScript = true
-        } else {
-            config.preferences.javaScriptEnabled = true
-        }
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        
-        // Security: Disable dangerous features
-        if #available(macOS 11.0, *) {
-            config.preferences.isElementFullscreenEnabled = false
-        }
-        
+        config.preferences.isElementFullscreenEnabled = false
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        
-        // Load HTML
-        webView.loadHTMLString(html, baseURL: nil)
-        
+
+        #if DEBUG
+        webView.isInspectable = true
+        #endif
+
+        // SECURITY: Load HTML with bundled JS libraries only (no network calls)
+        loadHTMLWithBundledJS(webView: webView, html: html)
+
         return webView
     }
-    
+
+    private func loadHTMLWithBundledJS(webView: WKWebView, html: String) {
+        // SECURITY: Only use bundled libraries - no external network calls
+        guard Self.hasBundledLibraries, let bundledJS = Self.bundledJSPath else {
+            let errorHTML = """
+            <!DOCTYPE html>
+            <html>
+            <head><meta charset="utf-8"></head>
+            <body style="font-family: -apple-system, sans-serif; padding: 20px; background: #1c1c1e; color: #ff6b6b;">
+                <h3>Libraries Not Found</h3>
+                <p>The bundled JavaScript libraries could not be located.</p>
+                <p style="color: #888; font-size: 12px;">Please rebuild the app with <code>./build-app.sh</code></p>
+            </body>
+            </html>
+            """
+            webView.loadHTMLString(errorHTML, baseURL: nil)
+            return
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("viz_\(messageId.uuidString)")
+        let jsDir = tempDir.appendingPathComponent("js")
+        let htmlFile = tempDir.appendingPathComponent("index.html")
+
+        do {
+            // Create temp directory structure
+            try FileManager.default.createDirectory(at: jsDir, withIntermediateDirectories: true)
+
+            // Copy bundled JS files to temp directory
+            let jsFiles = try FileManager.default.contentsOfDirectory(at: bundledJS, includingPropertiesForKeys: nil)
+            for file in jsFiles where file.pathExtension == "js" {
+                let destFile = jsDir.appendingPathComponent(file.lastPathComponent)
+                if !FileManager.default.fileExists(atPath: destFile.path) {
+                    try FileManager.default.copyItem(at: file, to: destFile)
+                }
+            }
+
+            // Replace relative js/ paths with absolute file:// URLs
+            let jsURL = jsDir.absoluteString
+            let processedHTML = html.replacingOccurrences(
+                of: "src=\"js/",
+                with: "src=\"\(jsURL)/"
+            )
+
+            // Write HTML file
+            try processedHTML.write(to: htmlFile, atomically: true, encoding: .utf8)
+
+            // Load with read access to temp directory (for local JS files)
+            webView.loadFileURL(htmlFile, allowingReadAccessTo: tempDir)
+        } catch {
+            AppLogger.shared.logError(error, context: "VisualizationView: Error setting up temp directory")
+            webView.loadHTMLString(html, baseURL: nil)
+        }
+    }
+
     func updateNSView(_ webView: WKWebView, context: Context) {
         // Update if needed
     }
-    
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
     
     class Coordinator: NSObject, WKNavigationDelegate {
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        @MainActor
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             // Block navigation to external URLs for security
             if navigationAction.navigationType == .linkActivated {
                 if let url = navigationAction.request.url,

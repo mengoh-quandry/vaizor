@@ -12,6 +12,7 @@ extension ConversationRecord {
         selectedProvider = conversation.selectedProvider?.rawValue
         selectedModel = conversation.selectedModel
         folderId = conversation.folderId?.uuidString
+        projectId = conversation.projectId?.uuidString
         if conversation.tags.isEmpty {
             tags = nil
         } else if let data = try? JSONEncoder().encode(conversation.tags) {
@@ -28,7 +29,7 @@ extension ConversationRecord {
            let tagsArray = try? JSONDecoder().decode([String].self, from: tagsData) {
             decodedTags = tagsArray
         }
-        
+
         return Conversation(
             id: UUID(uuidString: id) ?? UUID(),
             title: title,
@@ -40,6 +41,7 @@ extension ConversationRecord {
             selectedProvider: selectedProvider.flatMap { LLMProvider(rawValue: $0) },
             selectedModel: selectedModel,
             folderId: folderId.flatMap { UUID(uuidString: $0) },
+            projectId: projectId.flatMap { UUID(uuidString: $0) },
             tags: decodedTags,
             isFavorite: isFavorite
         )

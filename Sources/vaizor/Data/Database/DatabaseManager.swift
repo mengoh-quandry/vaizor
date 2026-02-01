@@ -7,7 +7,19 @@ final class DatabaseManager: @unchecked Sendable {
     let dbQueue: DatabaseQueue
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            // Fallback to temporary directory if app support unavailable
+            let tempDir = FileManager.default.temporaryDirectory
+            let vaizorDir = tempDir.appendingPathComponent("Vaizor")
+            try? FileManager.default.createDirectory(at: vaizorDir, withIntermediateDirectories: true)
+            let dbURL = vaizorDir.appendingPathComponent("vaizor.sqlite")
+            do {
+                dbQueue = try DatabaseManager.openDatabase(at: dbURL)
+            } catch {
+                dbQueue = DatabaseManager.openEmergencyDatabase()
+            }
+            return
+        }
         let vaizorDir = appSupport.appendingPathComponent("Vaizor")
         try? FileManager.default.createDirectory(at: vaizorDir, withIntermediateDirectories: true)
         let dbURL = vaizorDir.appendingPathComponent("vaizor.sqlite")
@@ -108,7 +120,62 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }
 
-        fatalError("Unable to open emergency database.")
+        // Last resort: create bare minimum in-memory database without migrations
+        // This ensures the app can at least start, even if functionality is limited
+        Task { @MainActor in
+            AppLogger.shared.log("CRITICAL: All database fallbacks failed. Using minimal in-memory database.", level: .error)
+        }
+
+        // Create the most basic possible database - no configuration, no migrations
+        // Just enough to prevent a crash
+        do {
+            let bareQueue = try DatabaseQueue()
+            // Create minimal schema manually to allow basic operations
+            try bareQueue.write { db in
+                // Minimal conversations table
+                try db.execute(sql: """
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL DEFAULT 'New Chat',
+                        summary TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        last_used_at TEXT NOT NULL,
+                        message_count INTEGER NOT NULL DEFAULT 0
+                    );
+                """)
+                // Minimal messages table
+                try db.execute(sql: """
+                    CREATE TABLE IF NOT EXISTS messages (
+                        id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        timestamp TEXT NOT NULL
+                    );
+                """)
+                // Minimal settings table
+                try db.execute(sql: """
+                    CREATE TABLE IF NOT EXISTS settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    );
+                """)
+            }
+            return bareQueue
+        } catch {
+            // Absolute last resort - return unconfigured in-memory database
+            // This may cause some features to fail but prevents app crash
+            Task { @MainActor in
+                AppLogger.shared.log("CRITICAL: Even minimal database creation failed. App may have limited functionality.", level: .error)
+            }
+            do {
+                return try DatabaseQueue()
+            } catch let dbError {
+                // If even an in-memory database fails, something is catastrophically wrong
+                // Log the error and crash with a meaningful message
+                fatalError("Unable to create in-memory database: \(dbError.localizedDescription). The app cannot continue.")
+            }
+        }
     }
 
     private static func timestampedSuffix() -> String {

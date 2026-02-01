@@ -6,6 +6,12 @@ struct ChatView: View {
     @ObservedObject var conversationManager: ConversationManager
     @EnvironmentObject var container: DependencyContainer
     @StateObject private var viewModel: ChatViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    // Adaptive colors helper
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
     @State private var messageText: String = ""
     @State private var selectedModel: String = ""
     @State private var showSlashCommands: Bool = false
@@ -15,18 +21,40 @@ struct ChatView: View {
     @AppStorage("chatFontZoom") private var chatFontZoom: Double = 1.0
     @AppStorage("chatInputFontZoom") private var chatInputFontZoom: Double = 1.0
     @AppStorage("enablePromptEnhancement") private var enablePromptEnhancement: Bool = true
+    @AppStorage("system_prompt_prefix") private var systemPromptPrefix: String = ""
     @FocusState private var isInputFocused: Bool
     @State private var scrollProxy: ScrollViewProxy?
-    @State private var autoScrollEnabled: Bool = true
+    @StateObject private var scrollState = ScrollStateManager()
     @State private var showCommandPalette: Bool = false
     @State private var editingMessageId: UUID? = nil
     @State private var editingMessageText: String = ""
     @State private var droppedFiles: [URL] = []
     @State private var isDraggingOver: Bool = false
-    
+
+    // Mention states
+    @State private var activeMentions: [Mention] = []
+    @State private var showMentionSuggestions: Bool = false
+    @State private var mentionSuggestions: [MentionableItem] = []
+    @State private var selectedMentionIndex: Int = 0
+    @State private var currentMentionType: MentionType? = nil
+    @State private var mentionSearchText: String = ""
+    @State private var mentionContext: MentionContext? = nil
+    @ObservedObject private var mentionService = MentionService.shared
+
+    // New feature states
+    @State private var showTemplates: Bool = false
+    @State private var showImporter: Bool = false
+    @State private var showCostDetails: Bool = false
+    @State private var showArtifactPanel: Bool = false
+    @State private var showBrowserPanel: Bool = false
+    @ObservedObject private var browserService = BrowserService.shared
+
     // Virtualization state
     @State private var visibleMessageRange: Range<Int> = 0..<50
     @State private var messageBufferSize: Int = 10 // Messages above/below viewport
+
+    // Keyboard navigation state
+    @State private var focusedMessageIndex: Int? = nil
 
     init(conversationId: UUID, conversationManager: ConversationManager) {
         self.conversationId = conversationId
@@ -43,178 +71,193 @@ struct ChatView: View {
         !messageText.isEmpty || viewModel.isStreaming
     }
 
-    private var animationTrigger: String {
-        isInputActive ? "active" : "inactive"
-    }
-
-    private var inputBorderColors: [Color] {
-        isInputActive ?
-            [Color.blue.opacity(0.6), Color.purple.opacity(0.6), Color.pink.opacity(0.6)] :
-            [Color.gray.opacity(0.2)]
-    }
-
-    private var inputBorderWidth: CGFloat {
-        isInputActive ? 2 : 1
-    }
-
-    private var inputShadowColor: Color {
-        isInputActive ? Color.blue.opacity(0.3) : Color.clear
-    }
-
-    struct InputBorderOverlayView: View {
-        let colors: [Color]
-        let lineWidth: CGFloat
-
-        var body: some View {
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: colors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: lineWidth
-                )
-        }
+    private var inputBorderColor: Color {
+        isInputFocused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor)
     }
 
     private func inputBorderOverlay() -> some View {
-        InputBorderOverlayView(colors: inputBorderColors, lineWidth: inputBorderWidth)
+        RoundedRectangle(cornerRadius: 8)
+            .stroke(inputBorderColor, lineWidth: isInputFocused ? 1.5 : 0.5)
+    }
+
+    // Computed properties for virtualization (extracted from ViewBuilder)
+    private var messageIndices: (start: Int, end: Int, total: Int) {
+        let total = viewModel.messages.count
+        let start = max(0, visibleMessageRange.lowerBound - messageBufferSize)
+        let end = min(total, visibleMessageRange.upperBound + messageBufferSize)
+        return (start, end, total)
+    }
+
+    private var visibleMessages: ArraySlice<Message> {
+        let indices = messageIndices
+        guard indices.start < indices.end, indices.end <= viewModel.messages.count else {
+            return []
+        }
+        return viewModel.messages[indices.start..<indices.end]
     }
 
     @ViewBuilder
     private func messagesList(proxy: ScrollViewProxy) -> some View {
         GeometryReader { geometry in
-            let dynamicMaxWidth = min(geometry.size.width - 40, max(350, geometry.size.width * 0.85))
             ScrollViewReader { scrollReader in
                 ScrollView {
-                    LazyVStack(spacing: 16) {
-                        // Loading indicator for older messages
-                        if viewModel.isLoadingMore {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Loading older messages...")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .id("loading-more")
-                        }
-                        
-                        // Load more trigger (invisible at top)
-                        Color.clear
-                            .frame(height: 1)
-                            .id("load-more-trigger")
-                            .onAppear {
-                                // Load more messages when scrolling near top
-                                if viewModel.hasMoreMessages && !viewModel.isLoadingMore {
-                                    Task {
-                                        await viewModel.loadMoreMessages()
-                                    }
-                                }
-                            }
-                        
-                        // Virtualized message rendering - only render visible + buffer
-                        let totalMessages = viewModel.messages.count
-                        let startIndex = max(0, visibleMessageRange.lowerBound - messageBufferSize)
-                        let endIndex = min(totalMessages, visibleMessageRange.upperBound + messageBufferSize)
-                        
-                        // Placeholder for messages above viewport
-                        if startIndex > 0 {
-                            Color.clear
-                                .frame(height: CGFloat(startIndex) * 100) // Estimated height
-                                .id("spacer-top")
-                        }
-                        
-                        // Render visible messages
-                        ForEach(Array(viewModel.messages[startIndex..<endIndex].enumerated()), id: \.element.id) { enumeratedItem in
-                            let index = enumeratedItem.offset
-                            let message = enumeratedItem.element
-                            let actualIndex = startIndex + index
-                            Group {
-                                if editingMessageId == message.id && message.role == .user {
-                                    // Show editable message view
-                                    EditableMessageView(
-                                        message: message,
-                                        text: $editingMessageText,
-                                        onSave: {
-                                            saveEditedMessage(messageId: message.id, newText: editingMessageText)
-                                        },
-                                        onCancel: {
-                                            editingMessageId = nil
-                                            editingMessageText = ""
-                                        }
-                                    )
-                                } else {
-                                    MessageBubbleView(
-                                        message: message,
-                                        provider: container.currentProvider,
-                                        isPromptEnhanced: enablePromptEnhancement && message.role == .user,
-                                        onCopy: {
-                                            let pasteboard = NSPasteboard.general
-                                            pasteboard.clearContents()
-                                            pasteboard.setString(message.content, forType: .string)
-                                        },
-                                        onEdit: message.role == .user ? {
-                                            // Start editing message
-                                            editingMessageId = message.id
-                                            editingMessageText = message.content
-                                        } : nil,
-                                        onDelete: {
-                                            deleteMessageAndResponse(message)
-                                        },
-                                        onRegenerate: message.role == .assistant ? {
-                                            regenerateResponse(for: message)
-                                        } : nil,
-                                        onRegenerateDifferent: message.role == .assistant ? {
-                                            regenerateWithDifferentModel(for: message)
-                                        } : nil,
-                                        onScrollToTop: message.role == .assistant ? {
-                                            if let proxy = scrollProxy {
-                                                withAnimation {
-                                                    proxy.scrollTo(message.id, anchor: .top)
-                                                }
-                                                autoScrollEnabled = false
-                                            }
-                                        } : nil
-                                    )
-                                }
-                            }
-                            .id(message.id)
-                            .frame(maxWidth: dynamicMaxWidth, alignment: message.role == .user ? .trailing : .leading)
-                            .onAppear {
-                                // Update visible range as messages appear
-                                updateVisibleRange(actualIndex)
-                            }
-                        }
-
-                        // Placeholder for messages below viewport
-                        if endIndex < totalMessages {
-                            Color.clear
-                                .frame(height: CGFloat(totalMessages - endIndex) * 100) // Estimated height
-                                .id("spacer-bottom")
-                        }
-
-                        if viewModel.isStreaming {
-                            if viewModel.currentStreamingText.isEmpty {
-                                ThinkingIndicator(status: viewModel.thinkingStatus)
-                                    .id("thinking")
-                            } else {
-                                StreamingMessageView(text: viewModel.currentStreamingText)
-                                    .id("streaming")
-                            }
-                        }
+                    LazyVStack(spacing: 20) {
+                        loadingIndicatorView
+                        loadMoreTriggerView
+                        topSpacerView
+                        messagesForEachView(maxWidth: computeMaxWidth(for: geometry.size.width))
+                        bottomSpacerView
+                        streamingView
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, max(10, min(20, geometry.size.width * 0.02)))
+                    .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                 }
+                .scrollIndicators(.hidden)
                 .onAppear {
                     scrollProxy = scrollReader
                 }
             }
+        }
+    }
+
+    private func computeMaxWidth(for width: CGFloat) -> CGFloat {
+        min(width - 32, max(400, width * 0.88))
+    }
+
+    @ViewBuilder
+    private var loadingIndicatorView: some View {
+        if viewModel.isLoadingMore {
+            VStack(spacing: 12) {
+                // Skeleton messages for loading state with stagger animation
+                MessageSkeleton(isUser: true, animationIndex: 0)
+                MessageSkeleton(isUser: false, animationIndex: 1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .id("loading-more")
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            .accessibilityLabel("Loading more messages")
+        }
+    }
+
+    @ViewBuilder
+    private var loadMoreTriggerView: some View {
+        Color.clear
+            .frame(height: 1)
+            .id("load-more-trigger")
+            .onAppear {
+                if viewModel.hasMoreMessages && !viewModel.isLoadingMore {
+                    Task { await viewModel.loadMoreMessages() }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var topSpacerView: some View {
+        let indices = messageIndices
+        if indices.start > 0 {
+            Color.clear
+                .frame(height: CGFloat(indices.start) * 80)
+                .id("spacer-top")
+        }
+    }
+
+    @ViewBuilder
+    private var bottomSpacerView: some View {
+        let indices = messageIndices
+        if indices.end < indices.total {
+            Color.clear
+                .frame(height: CGFloat(indices.total - indices.end) * 80)
+                .id("spacer-bottom")
+        }
+    }
+
+    @ViewBuilder
+    private func messagesForEachView(maxWidth: CGFloat) -> some View {
+        let indices = messageIndices
+        ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { offset, message in
+            messageRowView(message: message, actualIndex: indices.start + offset, animationIndex: offset, maxWidth: maxWidth)
+        }
+    }
+
+    @ViewBuilder
+    private func messageRowView(message: Message, actualIndex: Int, animationIndex: Int, maxWidth: CGFloat) -> some View {
+        Group {
+            if editingMessageId == message.id && message.role == .user {
+                EditableMessageView(
+                    message: message,
+                    text: $editingMessageText,
+                    onSave: { saveEditedMessage(messageId: message.id, newText: editingMessageText) },
+                    onCancel: { editingMessageId = nil; editingMessageText = "" }
+                )
+            } else {
+                messageContentView(message: message, animationIndex: animationIndex)
+            }
+        }
+        .id(message.id)
+        .frame(maxWidth: maxWidth, alignment: message.role == .user ? .trailing : .leading)
+        .onAppear { updateVisibleRange(actualIndex) }
+    }
+
+    @ViewBuilder
+    private func messageContentView(message: Message, animationIndex: Int = 0) -> some View {
+        MessageBubbleView(
+            message: message,
+            provider: container.currentProvider,
+            isPromptEnhanced: enablePromptEnhancement && message.role == .user,
+            onCopy: { copyMessageToClipboard(message) },
+            onEdit: message.role == .user ? { startEditingMessage(message) } : nil,
+            onDelete: { deleteMessageAndResponse(message) },
+            onRegenerate: message.role == .assistant ? { regenerateResponse(for: message) } : nil,
+            onRegenerateDifferent: message.role == .assistant ? { regenerateWithDifferentModel(for: message) } : nil,
+            onScrollToTop: message.role == .assistant ? { scrollToMessage(message) } : nil,
+            animationIndex: animationIndex,
+            shouldAnimateAppear: animationIndex < 10 // Only animate first 10 messages
+        )
+    }
+
+    @ViewBuilder
+    private var streamingView: some View {
+        if viewModel.isStreaming {
+            VStack(alignment: .leading, spacing: 8) {
+                // Show context enhancement indicator if applicable
+                if viewModel.contextWasEnhanced {
+                    ContextEnhancementIndicator(details: viewModel.contextEnhancementDetails)
+                        .padding(.horizontal, 60)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if viewModel.currentStreamingText.isEmpty {
+                    ThinkingIndicator(status: viewModel.thinkingStatus)
+                        .id("thinking")
+                } else {
+                    StreamingMessageView(text: viewModel.currentStreamingText)
+                        .id("streaming")
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: viewModel.contextWasEnhanced)
+        }
+    }
+
+    // Helper functions for cleaner callbacks
+    private func copyMessageToClipboard(_ message: Message) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(message.content, forType: .string)
+    }
+
+    private func startEditingMessage(_ message: Message) {
+        editingMessageId = message.id
+        editingMessageText = message.content
+    }
+
+    private func scrollToMessage(_ message: Message) {
+        if let proxy = scrollProxy {
+            withAnimation(VaizorAnimations.smoothScroll) {
+                proxy.scrollTo(message.id, anchor: .top)
+            }
+            scrollState.autoScrollEnabled = false
         }
     }
     
@@ -224,25 +267,48 @@ struct ChatView: View {
         let buffer = messageBufferSize
         let newLower = max(0, index - buffer)
         let newUpper = min(viewModel.messages.count, index + buffer + 50)
-        
+
         if newLower != visibleMessageRange.lowerBound || newUpper != visibleMessageRange.upperBound {
             visibleMessageRange = newLower..<newUpper
         }
     }
 
+    private func navigateMessages(direction: Int) {
+        let messageCount = viewModel.messages.count
+        guard messageCount > 0 else { return }
+
+        let currentIndex = focusedMessageIndex ?? (direction > 0 ? -1 : messageCount)
+        let newIndex = max(0, min(messageCount - 1, currentIndex + direction))
+
+        guard newIndex != focusedMessageIndex else { return }
+
+        focusedMessageIndex = newIndex
+        let message = viewModel.messages[newIndex]
+
+        if let proxy = scrollProxy {
+            withAnimation(VaizorAnimations.smoothScroll) {
+                proxy.scrollTo(message.id, anchor: direction > 0 ? .bottom : .top)
+            }
+        }
+    }
+
     @ViewBuilder
     private func inputRow() -> some View {
-        HStack(spacing: 12) {
+        // Unified capsule input: text field and send button in one seamless container
+        HStack(spacing: 0) {
             TextField(
-                viewModel.isParallelMode ? "Ask multiple models..." : "Ask anything or type / for commands",
+                viewModel.isParallelMode ? "Ask multiple models..." : "Ask anything, type / for commands, @ for context",
                 text: $messageText,
                 axis: .vertical
             )
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(VaizorTypography.body)
+                .foregroundStyle(colors.textPrimary)
                 .lineLimit(1...6)
                 .disabled(viewModel.isStreaming)
                 .focused($isInputFocused)
+                .padding(.leading, VaizorSpacing.md)
+                .padding(.vertical, VaizorSpacing.xs + 2)
                 .onHover { isHovering in
                     if isHovering {
                         isInputFocused = true
@@ -254,8 +320,10 @@ struct ChatView: View {
                 .onChange(of: messageText) { _, newValue in
                     // Cancel any existing timer
                     slashCommandTimer?.cancel()
-                    
+
+                    // Check for slash commands
                     if newValue.hasPrefix("/") {
+                        showMentionSuggestions = false
                         // Show menu immediately if "/" is typed
                         if newValue == "/" {
                             showSlashCommands = true
@@ -275,21 +343,21 @@ struct ChatView: View {
                     } else {
                         // No "/" prefix, hide menu
                         showSlashCommands = false
+
+                        // Check for @-mentions
+                        checkForMentionTrigger(in: newValue)
                     }
                 }
-                .onKeyPress(phases: .down) { press in
-                    if press.key == .return {
-                        // Shift+Enter: insert newline (let default behavior happen)
-                        if press.modifiers.contains(.shift) {
-                            return .ignored
-                        }
-                        // Plain Enter: send message
+                .onSubmit {
+                    // Plain Enter: send message (unless mention suggestions are shown)
+                    if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                        selectMention(at: selectedMentionIndex)
+                    } else {
                         Task { await sendMessage() }
-                        return .handled
                     }
-                    return .ignored
                 }
 
+            // Send button integrated into the capsule with gradient
             Button {
                 if viewModel.isStreaming {
                     viewModel.stopStreaming()
@@ -299,39 +367,82 @@ struct ChatView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(viewModel.isStreaming ? Color.red : Color(hex: "00976d"))
-                        .frame(width: 32, height: 32)
-                        .shadow(color: (viewModel.isStreaming ? Color.red : Color(hex: "00976d")).opacity(0.3), radius: 4, y: 2)
+                        .fill(sendButtonGradient)
+                        .frame(width: VaizorSpacing.xl, height: VaizorSpacing.xl)
+                        .shadow(color: sendButtonShadow, radius: 4, y: 2)
 
                     Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Color(hex: "eeeeee"))
-                        .symbolRenderingMode(.hierarchical)
+                        .font(VaizorTypography.body)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                        .contentTransition(.symbolEffect(.replace))
                 }
             }
             .buttonStyle(.plain)
             .disabled(!viewModel.isStreaming && messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(!viewModel.isStreaming && messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1.0)
+            .padding(.trailing, VaizorSpacing.xxs + 2)
+            .padding(.vertical, VaizorSpacing.xxs + 2)
+        }
+        .background(
+            Capsule()
+                .fill(colors.inputBackground)
+        )
+        // Inner shadow for recessed effect (subtle in light mode)
+        .overlay(
+            colorScheme == .dark ?
+            Capsule()
+                .stroke(ThemeColors.innerShadow, lineWidth: 1)
+                .blur(radius: 1)
+                .mask(Capsule())
+            : nil
+        )
+        // Focus glow ring
+        .overlay(
+            Capsule()
+                .stroke(isInputFocused ? colors.accent : colors.borderSubtle, lineWidth: isInputFocused ? 1.5 : 0.5)
+        )
+        .shadow(color: isInputFocused ? (colorScheme == .light ? colors.accent.opacity(0.25) : ThemeColors.focusGlow) : .clear, radius: colorScheme == .light ? 6 : 8, y: 0)
+        .animation(.easeInOut(duration: 0.15), value: isInputFocused)
+    }
+
+    private var sendButtonGradient: LinearGradient {
+        if viewModel.isStreaming {
+            return LinearGradient(colors: [Color(hex: "e53935"), Color(hex: "c62828")], startPoint: .top, endPoint: .bottom)
+        } else if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return LinearGradient(colors: [ThemeColors.disabledText], startPoint: .top, endPoint: .bottom)
+        } else {
+            return ThemeColors.accentGradient
+        }
+    }
+
+    private var sendButtonShadow: Color {
+        if viewModel.isStreaming {
+            return Color(hex: "e53935").opacity(0.3)
+        } else if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .clear
+        } else {
+            return ThemeColors.accentGlow
         }
     }
 
     @ViewBuilder
     private var errorBanner: some View {
         if let error = viewModel.error {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(error)
-                    .font(.caption)
-                Spacer()
-                Button("Dismiss") {
+            ErrorCard(
+                error: error,
+                onDismiss: { viewModel.error = nil },
+                onRetry: {
                     viewModel.error = nil
+                    // Retry last action if possible
+                },
+                onOpenSettings: {
+                    viewModel.error = nil
+                    NotificationCenter.default.post(name: .openSettings, object: nil)
                 }
-                .buttonStyle(.plain)
-                .font(.caption)
-            }
-            .padding(8)
-            .background(Color.orange.opacity(0.1))
+            )
+            .padding(.horizontal, VaizorSpacing.md)
+            .padding(.vertical, VaizorSpacing.xs)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -343,33 +454,33 @@ struct ChatView: View {
                     scrollProxy = proxy
                 }
                 .onChange(of: viewModel.messages.count) { _, _ in
-                    if autoScrollEnabled, let lastMessage = viewModel.messages.last {
-                        withAnimation {
+                    if scrollState.autoScrollEnabled, let lastMessage = viewModel.messages.last {
+                        withAnimation(VaizorAnimations.smoothScroll) {
                             proxy.scrollTo(lastMessage.id, anchor: .bottom)
                         }
                     }
                 }
                 .onChange(of: viewModel.currentStreamingText) { _, _ in
-                    if autoScrollEnabled {
-                        withAnimation {
+                    if scrollState.autoScrollEnabled {
+                        withAnimation(VaizorAnimations.smoothScroll) {
                             proxy.scrollTo("streaming", anchor: .bottom)
                         }
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .scrollToTop)) { _ in
                     if let firstMessage = viewModel.messages.first {
-                        withAnimation {
+                        withAnimation(VaizorAnimations.smoothScroll) {
                             proxy.scrollTo(firstMessage.id, anchor: .top)
                         }
-                        autoScrollEnabled = false
+                        scrollState.autoScrollEnabled = false
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .scrollToBottom)) { _ in
                     if let lastMessage = viewModel.messages.last {
-                        withAnimation {
+                        withAnimation(VaizorAnimations.smoothScroll) {
                             proxy.scrollTo(lastMessage.id, anchor: .bottom)
                         }
-                        autoScrollEnabled = true
+                        scrollState.autoScrollEnabled = true
                     }
                 }
         }
@@ -378,6 +489,23 @@ struct ChatView: View {
     @ViewBuilder
     private var inputBar: some View {
         VStack(spacing: 0) {
+            // Mention suggestions popup
+            if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                MentionSuggestionView(
+                    suggestions: mentionSuggestions,
+                    selectedIndex: selectedMentionIndex,
+                    onSelect: { item in
+                        insertMention(item)
+                    },
+                    onDismiss: {
+                        showMentionSuggestions = false
+                    }
+                )
+                .padding(.horizontal, VaizorSpacing.md)
+                .padding(.bottom, VaizorSpacing.xs)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             // Slash command suggestions
             if showSlashCommands && messageText.hasPrefix("/") {
                 SlashCommandView(
@@ -388,50 +516,99 @@ struct ChatView: View {
                     conversationManager: conversationManager
                 )
                 .environmentObject(container)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .padding(.horizontal, VaizorSpacing.md)
+                .padding(.bottom, VaizorSpacing.xs)
             }
 
-            Divider()
+            // Active mentions pills
+            if !activeMentions.isEmpty {
+                VStack(spacing: VaizorSpacing.xxs) {
+                    MentionPillsView(
+                        mentions: activeMentions,
+                        onRemove: { mention in
+                            removeMention(mention)
+                        },
+                        onTap: { mention in
+                            // Show mention details (could open file, etc.)
+                            showMentionDetails(mention)
+                        }
+                    )
 
-            VStack(spacing: 12) {
-                // Dropped files preview
-                if !droppedFiles.isEmpty {
-                    DroppedFilesView(files: droppedFiles) {
-                        droppedFiles.removeAll()
+                    // Token count warning if context is large
+                    if let context = mentionContext, context.totalTokens > 5000 {
+                        MentionContextWarningView(
+                            totalTokens: context.totalTokens,
+                            warnings: context.warnings
+                        )
                     }
                 }
-                
-                // Top row: Icons and model selector
-                topInputRow
+                .padding(.horizontal, VaizorSpacing.md)
+                .padding(.top, VaizorSpacing.xs)
+            }
 
-                // Bottom row: Text input and send button
-                inputRow()
-            }
-            .padding(16)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(inputBorderOverlay())
-            .overlay(
-                Group {
-                    if isDraggingOver {
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color(hex: "00976d"), lineWidth: 2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color(hex: "00976d").opacity(0.1))
-                            )
+            // Dropped files preview
+            if !droppedFiles.isEmpty {
+                DroppedFilesView(
+                    files: droppedFiles,
+                    onClear: { droppedFiles.removeAll() },
+                    onRemoveFile: { file in
+                        droppedFiles.removeAll { $0 == file }
                     }
-                }
-            )
-            .shadow(color: inputShadowColor, radius: 12, x: 0, y: 4)
-            .animation(.easeInOut(duration: 0.3), value: animationTrigger)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .onDrop(of: [.fileURL], isTargeted: $isDraggingOver) { providers in
-                handleDroppedFiles(providers: providers)
+                )
+                .padding(.horizontal, VaizorSpacing.md)
+                .padding(.top, VaizorSpacing.xs)
             }
+
+            // Top row: Icons and model selector (with more vertical spacing)
+            topInputRow
+                .padding(.horizontal, VaizorSpacing.md)
+                .padding(.top, VaizorSpacing.sm)
+                .padding(.bottom, VaizorSpacing.xs)
+
+            // Bottom row: Unified capsule input
+            inputRow()
+                .padding(.horizontal, VaizorSpacing.sm)
+                .padding(.bottom, VaizorSpacing.sm)
+                .overlay(
+                    Group {
+                        if isDraggingOver {
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(Color.accentColor, lineWidth: 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 24)
+                                        .fill(Color.accentColor.opacity(0.05))
+                                )
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                )
+                .onDrop(of: [.fileURL], isTargeted: $isDraggingOver) { providers in
+                    handleDroppedFiles(providers: providers)
+                }
         }
+        .background(
+            ZStack {
+                // Base background (gradient in dark mode, solid in light)
+                colors.surface
+                // Subtle top border highlight (dark mode only)
+                if colorScheme == .dark {
+                    VStack(spacing: 0) {
+                        Rectangle()
+                            .fill(ThemeColors.borderHighlight)
+                            .frame(height: 0.5)
+                        Spacer()
+                    }
+                } else {
+                    // Light mode: subtle top border
+                    VStack(spacing: 0) {
+                        Rectangle()
+                            .fill(colors.border)
+                            .frame(height: 0.5)
+                        Spacer()
+                    }
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -446,9 +623,9 @@ struct ChatView: View {
                         .font(.system(size: 18))
                         .foregroundStyle(.secondary)
                 }
-                .help("Attach Files")
                 .buttonStyle(.plain)
-                .help("Attach file")
+                .help("Attach Files")
+                .accessibilityLabel("Attach files")
 
                 Button {
                     NotificationCenter.default.post(
@@ -462,6 +639,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add image")
+                .accessibilityLabel("Add image")
 
                 Button {
                     showWhiteboard.toggle()
@@ -472,29 +650,93 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open whiteboard")
+                .accessibilityLabel(showWhiteboard ? "Close whiteboard" : "Open whiteboard")
+
+                // Browser toggle
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showBrowserPanel.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 18))
+                            .foregroundStyle(showBrowserPanel ? ThemeColors.accent : .secondary)
+
+                        if browserService.isLoading {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 12, height: 12)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("AI Browser")
+                .accessibilityLabel(showBrowserPanel ? "Close browser" : "Open AI browser")
+
+                // Built-in tools toggle
+                BuiltInToolsButton()
 
                 // MCP Servers indicator
                 mcpServersMenu
+
+                Divider()
+                    .frame(height: 16)
+
+                // Templates button
+                Button {
+                    showTemplates = true
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Browse templates")
+                .accessibilityLabel("Browse project templates")
+
+                // Import chat button
+                Button {
+                    showImporter = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Import chat")
+                .accessibilityLabel("Import chat history")
             }
 
             Spacer()
 
             // Right icons
             HStack(spacing: 6) {
+                // Cost display
+                CostDisplayView()
+                    .onTapGesture {
+                        showCostDetails = true
+                    }
+                    .help("Click to view cost details")
+                    .accessibilityLabel("View cost details")
+
                 // Prompt enhancement indicator
                 if enablePromptEnhancement {
                     Image(systemName: "sparkles")
                         .font(.system(size: 14))
                         .foregroundStyle(Color(hex: "00976d"))
                         .help("Prompt enhancement enabled")
+                        .accessibilityLabel("Prompt enhancement is enabled")
                 }
-                
+
                 // Parallel mode toggle
                 parallelModeButton
-                
+
                 // Model selector - moved to right side
                 ModelSelectorMenu(selectedModel: $selectedModel)
                     .layoutPriority(1)
+                    .accessibilityLabel("Select AI model: \(selectedModel.isEmpty ? "default" : selectedModel)")
+
                 Button {
                     NotificationCenter.default.post(
                         name: .showUnderConstructionToast,
@@ -507,6 +749,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Voice input")
+                .accessibilityLabel("Voice input")
             }
         }
     }
@@ -605,17 +848,17 @@ struct ChatView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(isEnabled ? Color.green : Color.gray)
+                                .fill(isEnabled ? ThemeColors.success : ThemeColors.textMuted)
                                 .frame(width: 6, height: 6)
 
                             Text(server.name)
                                 .foregroundStyle(.primary)
-                            
+
                             Spacer()
-                            
+
                             Image(systemName: "power")
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(isEnabled ? Color(hex: "00976d") : Color.secondary)
+                                .foregroundStyle(isEnabled ? ThemeColors.accent : Color.secondary)
                         }
                         .frame(minWidth: 120)
                     }
@@ -628,7 +871,7 @@ struct ChatView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 18, height: 18)
                     .clipShape(RoundedRectangle(cornerRadius: 2))
-                    .foregroundStyle(container.mcpManager.enabledServers.isEmpty ? Color.secondary : Color.green)
+                    .foregroundStyle(container.mcpManager.enabledServers.isEmpty ? Color.secondary : ThemeColors.accent)
 
                 if !container.mcpManager.enabledServers.isEmpty {
                     Text("\(container.mcpManager.enabledServers.count)")
@@ -660,7 +903,7 @@ struct ChatView: View {
         .onAppear {
             AppLogger.shared.log("ChatView appeared for conversation \(conversationId)", level: .info)
             viewModel.setContainer(container)
-            
+
             // Load conversation-specific model settings if available
             if let conversation = conversationManager.conversations.first(where: { $0.id == conversationId }) {
                 if let convProvider = conversation.selectedProvider {
@@ -669,8 +912,15 @@ struct ChatView: View {
                 if let convModel = conversation.selectedModel {
                     selectedModel = convModel
                 }
+
+                // Load project context if conversation belongs to a project
+                if let projectId = conversation.projectId,
+                   let project = container.projectManager.getProject(by: projectId) {
+                    viewModel.setProjectContext(project.context, projectId: projectId)
+                    AppLogger.shared.log("Loaded project context for project: \(project.name)", level: .info)
+                }
             }
-            
+
             viewModel.updateProvider(container.createLLMProvider())
             Task {
                 await container.loadModelsForCurrentProvider()
@@ -703,12 +953,74 @@ struct ChatView: View {
                 }
             }
         }
+        .onDisappear {
+            // Clean up any pending tasks to prevent memory leaks
+            slashCommandTimer?.cancel()
+            slashCommandTimer = nil
+            scrollState.reset()
+        }
         .onKeyPress { press in
             // Command+K to open palette
             if press.modifiers.contains(.command) && press.key.character == "k" {
                 showCommandPalette = true
                 return .handled
             }
+
+            // Handle mention suggestion navigation when suggestions are shown
+            if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                switch press.key {
+                case .upArrow:
+                    selectedMentionIndex = max(0, selectedMentionIndex - 1)
+                    return .handled
+                case .downArrow:
+                    selectedMentionIndex = min(mentionSuggestions.count - 1, selectedMentionIndex + 1)
+                    return .handled
+                case .return:
+                    selectMention(at: selectedMentionIndex)
+                    return .handled
+                case .escape:
+                    showMentionSuggestions = false
+                    return .handled
+                case .tab:
+                    selectMention(at: selectedMentionIndex)
+                    return .handled
+                default:
+                    break
+                }
+            }
+
+            // Arrow key navigation for messages (when not typing)
+            if !isInputFocused {
+                switch press.key {
+                case .upArrow:
+                    navigateMessages(direction: -1)
+                    return .handled
+                case .downArrow:
+                    navigateMessages(direction: 1)
+                    return .handled
+                case .home:
+                    // Jump to first message
+                    if let firstMessage = viewModel.messages.first, let proxy = scrollProxy {
+                        focusedMessageIndex = 0
+                        withAnimation(VaizorAnimations.smoothScroll) {
+                            proxy.scrollTo(firstMessage.id, anchor: .top)
+                        }
+                    }
+                    return .handled
+                case .end:
+                    // Jump to last message
+                    if let lastMessage = viewModel.messages.last, let proxy = scrollProxy {
+                        focusedMessageIndex = viewModel.messages.count - 1
+                        withAnimation(VaizorAnimations.smoothScroll) {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                    return .handled
+                default:
+                    break
+                }
+            }
+
             return .ignored
         }
         .onReceive(NotificationCenter.default.publisher(for: .showUnderConstructionToast)) { notification in
@@ -733,6 +1045,33 @@ struct ChatView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openArtifactInPanel)) { notification in
+            if let artifact = notification.object as? Artifact {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.currentArtifact = artifact
+                    showArtifactPanel = true
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleArtifactPanel)) { notification in
+            if let isShown = notification.object as? Bool {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showArtifactPanel = isShown
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showArtifactPanel.toggle()
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sendInitialMessage)) { notification in
+            if let message = notification.object as? String {
+                messageText = message
+                Task {
+                    await sendMessage()
+                }
+            }
+        }
         .onChange(of: container.currentProvider) { _, newProvider in
             viewModel.updateProvider(container.createLLMProvider())
             if !newProvider.defaultModels.contains(selectedModel) {
@@ -745,10 +1084,178 @@ struct ChatView: View {
         .sheet(isPresented: $showWhiteboard) {
             WhiteboardView(isPresented: $showWhiteboard)
         }
+        .sheet(isPresented: $showTemplates) {
+            ProjectTemplatePickerView { template in
+                // Use the first starter prompt if available
+                messageText = template.starterPrompts.first ?? ""
+                showTemplates = false
+            }
+        }
+        .sheet(isPresented: $showImporter) {
+            ChatImportView()
+        }
+        .sheet(isPresented: $showCostDetails) {
+            CostDetailsView()
+        }
     }
     
     @ViewBuilder
     private var mainContentView: some View {
+        HSplitView {
+            // Left: Chat content
+            chatContentView
+
+            // Middle: Browser panel (when shown)
+            if showBrowserPanel {
+                BrowserView(
+                    browserService: browserService,
+                    onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showBrowserPanel = false
+                        }
+                    },
+                    onSendToAI: { screenshot, content in
+                        handleBrowserContentSentToAI(screenshot: screenshot, content: content)
+                    }
+                )
+                .frame(minWidth: 400, idealWidth: 550, maxWidth: 900)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            // Right: Artifact panel (when panel is shown)
+            if showArtifactPanel {
+                if let artifact = viewModel.currentArtifact {
+                    ArtifactPanelView(artifact: artifact, onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showArtifactPanel = false
+                        }
+                    })
+                    .id(artifact.id) // Force refresh when artifact changes
+                    .frame(minWidth: 350, idealWidth: 450, maxWidth: 700)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else {
+                    // Empty artifact panel placeholder
+                    emptyArtifactPanel
+                        .frame(minWidth: 350, idealWidth: 450, maxWidth: 700)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+        }
+    }
+
+    /// Handle content sent from browser to AI for analysis
+    private func handleBrowserContentSentToAI(screenshot: NSImage?, content: PageContent?) {
+        var contextText = ""
+
+        if let content = content {
+            contextText = """
+            I'm viewing a web page and would like your help analyzing it.
+
+            **Page Title:** \(content.title)
+            **URL:** \(content.url.absoluteString)
+
+            **Page Content:**
+            \(String(content.text.prefix(3000)))
+            \(content.text.count > 3000 ? "\n...[truncated]" : "")
+
+            """
+        }
+
+        if screenshot != nil {
+            contextText += "\n\nI've also included a screenshot of the page."
+            // Note: For vision models, the screenshot would be added as an attachment
+            // This would require extending the message sending to support images
+        }
+
+        if contextText.isEmpty {
+            contextText = "What's on this web page?"
+        } else {
+            contextText += "\n\nWhat can you tell me about this page?"
+        }
+
+        messageText = contextText
+        isInputFocused = true
+    }
+
+    @ViewBuilder
+    private var emptyArtifactPanel: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(ThemeColors.accent)
+
+                    Text("Artifacts")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(ThemeColors.textPrimary)
+                }
+
+                Spacer()
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showArtifactPanel = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(ThemeColors.textSecondary)
+                        .frame(width: 26, height: 26)
+                        .background(ThemeColors.darkSurface)
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(ThemeColors.darkBase)
+
+            Divider()
+                .background(ThemeColors.darkBorder)
+
+            // Empty state
+            VStack(spacing: 20) {
+                Spacer()
+
+                // Animated illustration
+                ArtifactEmptyStateIllustration()
+
+                VStack(spacing: 8) {
+                    Text("No artifacts yet")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(ThemeColors.textPrimary)
+
+                    Text("Interactive content will appear here")
+                        .font(.system(size: 13))
+                        .foregroundStyle(ThemeColors.textSecondary)
+                }
+
+                // Examples
+                VStack(spacing: 8) {
+                    ArtifactExampleRow(icon: "chevron.left.forwardslash.chevron.right", text: "React components")
+                    ArtifactExampleRow(icon: "chart.bar.fill", text: "Charts & visualizations")
+                    ArtifactExampleRow(icon: "doc.richtext", text: "HTML previews")
+                    ArtifactExampleRow(icon: "square.grid.3x3", text: "Interactive diagrams")
+                }
+                .padding(.top, 8)
+
+                Text("Ask me to create something!")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ThemeColors.accent)
+                    .padding(.top, 8)
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 20)
+        }
+        .background(ThemeColors.darkBase)
+    }
+
+    @ViewBuilder
+    private var chatContentView: some View {
         VStack(spacing: 0) {
             // Toast notification
             if showToast {
@@ -756,9 +1263,9 @@ struct ChatView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
             }
-            
+
             errorBanner
-            
+
             // Show parallel comparison view if in parallel mode with responses
             if viewModel.isParallelMode && (!viewModel.parallelResponses.isEmpty || viewModel.isStreaming) {
                 ModelComparisonView(
@@ -766,53 +1273,113 @@ struct ChatView: View {
                     errors: viewModel.parallelErrors,
                     isStreaming: viewModel.isStreaming
                 )
+            } else if viewModel.messages.isEmpty && !viewModel.isStreaming && !viewModel.isLoadingInitial {
+                // Empty conversation state
+                emptyConversationView
             } else {
                 messagesScrollView
                     .overlay(alignment: .bottomTrailing) {
                         scrollToBottomButton
                     }
             }
-            
+
             Divider()
-            
+
             inputBar
                 .font(.system(size: 14 * chatInputFontZoom))
         }
     }
-    
-    @ViewBuilder
-    private var scrollToBottomButton: some View {
-        if !viewModel.messages.isEmpty {
-            VStack(spacing: 0) {
-                Button {
-                    if let lastMessage = viewModel.messages.last, let proxy = scrollProxy {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                        autoScrollEnabled = true
-                    }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color(hex: "00976d"))
-                            .frame(width: 32, height: 32)
-                            .shadow(color: Color(hex: "00976d").opacity(0.3), radius: 4, y: 2)
 
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(Color(hex: "eeeeee"))
-                            .symbolRenderingMode(.hierarchical)
-                    }
-                }
-                .buttonStyle(.plain)
-                .help("Scroll to Bottom")
-                
+    @ViewBuilder
+    private var emptyConversationView: some View {
+        let conversation = conversationManager.conversations.first(where: { $0.id == conversationId })
+        let title = conversation?.title ?? ""
+        let modelName = selectedModel.isEmpty ? container.currentProvider.displayName : selectedModel
+
+        ScrollView {
+            VStack(spacing: 32) {
                 Spacer()
                     .frame(height: 40)
+
+                // Animated illustration
+                ChatEmptyStateIllustration()
+
+                // Title and model info
+                VStack(spacing: 10) {
+                    Text(title.isEmpty ? "Start a Conversation" : title)
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                        .foregroundStyle(ThemeColors.textPrimary)
+
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(ThemeColors.accent)
+                            .frame(width: 6, height: 6)
+
+                        Text("Using \(modelName)")
+                            .font(.system(size: 13))
+                            .foregroundStyle(ThemeColors.textSecondary)
+                    }
+                }
+
+                // Helpful hints
+                VStack(spacing: 10) {
+                    ChatHintRow(
+                        icon: "lightbulb.fill",
+                        title: "Ask anything",
+                        subtitle: "Questions, ideas, code help, writing assistance",
+                        color: ThemeColors.warning
+                    )
+                    ChatHintRow(
+                        icon: "at",
+                        title: "Mention files with @",
+                        subtitle: "@filename.swift to include code context",
+                        color: ThemeColors.info
+                    )
+                    ChatHintRow(
+                        icon: "slash.circle",
+                        title: "Use / for commands",
+                        subtitle: "/help, /clear, /template, and more",
+                        color: ThemeColors.codeAccent
+                    )
+                    ChatHintRow(
+                        icon: "paperclip",
+                        title: "Attach files",
+                        subtitle: "Drop files or click + to add context",
+                        color: ThemeColors.accent
+                    )
+                }
+                .frame(maxWidth: 400)
+
+                // Keyboard shortcuts
+                HStack(spacing: 20) {
+                    EmptyStateKeyboardHint(keys: ["Return"], label: "Send message")
+                    EmptyStateKeyboardHint(keys: ["K"], label: "Commands", hasCommand: true)
+                    EmptyStateKeyboardHint(keys: ["N"], label: "New chat", hasCommand: true)
+                }
+                .padding(.top, 8)
+
+                Spacer()
+                    .frame(height: 80)
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 0)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 32)
         }
+        .background(ThemeColors.darkBase)
+    }
+
+    @ViewBuilder
+    private var scrollToBottomButton: some View {
+        SmartScrollButton(scrollState: scrollState) {
+            if let lastMessage = viewModel.messages.last, let proxy = scrollProxy {
+                withAnimation(VaizorAnimations.smoothScroll) {
+                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                }
+            }
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 50)
+        .accessibilityLabel("Scroll to bottom")
+        .accessibilityHint("Double tap to scroll to the most recent message")
     }
     
     @ViewBuilder
@@ -845,7 +1412,7 @@ struct ChatView: View {
             if let template = conversationManager.templates.first(where: { $0.name.lowercased() == command.value?.lowercased() }) {
                 messageText = template.prompt
                 if let systemPrompt = template.systemPrompt, !systemPrompt.isEmpty {
-                    // TODO: Apply system prompt to conversation
+                    systemPromptPrefix = systemPrompt
                 }
             } else {
                 messageText = "/template "
@@ -902,6 +1469,135 @@ struct ChatView: View {
         }
     }
     
+    // MARK: - Mention Handling
+
+    private func checkForMentionTrigger(in text: String) {
+        // Get cursor position (approximate - use end of text)
+        let cursorPosition = text.count
+
+        if let result = mentionService.detectIncompleteMention(in: text, cursorPosition: cursorPosition) {
+            currentMentionType = result.type
+            mentionSearchText = result.searchText
+
+            // Generate suggestions asynchronously
+            Task {
+                let suggestions = await mentionService.generateSuggestions(
+                    type: result.type,
+                    searchText: result.searchText
+                )
+
+                await MainActor.run {
+                    mentionSuggestions = suggestions
+                    selectedMentionIndex = 0
+                    showMentionSuggestions = !suggestions.isEmpty
+                }
+            }
+        } else {
+            showMentionSuggestions = false
+            mentionSuggestions = []
+        }
+    }
+
+    private func selectMention(at index: Int) {
+        guard index >= 0 && index < mentionSuggestions.count else { return }
+        let item = mentionSuggestions[index]
+        insertMention(item)
+    }
+
+    private func insertMention(_ item: MentionableItem) {
+        // If item is a type suggestion (no specific value), insert the prefix
+        if item.value == item.type.prefix {
+            // Replace incomplete mention with the type prefix
+            replaceIncompleteMentionWith(item.type.prefix)
+        } else {
+            // Create a mention and add it to active mentions
+            let mention = Mention(
+                type: item.type,
+                value: item.value,
+                displayName: item.displayName
+            )
+
+            activeMentions.append(mention)
+
+            // Remove the mention text from the input (replace with empty)
+            replaceIncompleteMentionWith("")
+
+            // Update mention context
+            Task {
+                await resolveMentionContext()
+            }
+        }
+
+        showMentionSuggestions = false
+        mentionSuggestions = []
+    }
+
+    private func replaceIncompleteMentionWith(_ replacement: String) {
+        // Find and replace the incomplete mention in the text
+        // Pattern: @type:search or just @search
+        let patterns = [
+            #"@file:[^\s]*$"#,
+            #"@folder:[^\s]*$"#,
+            #"@url:[^\s]*$"#,
+            #"@project:[^\s]*$"#,
+            #"@[^\s:]*$"#
+        ]
+
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []),
+               let match = regex.firstMatch(in: messageText, options: [], range: NSRange(messageText.startIndex..., in: messageText)),
+               let range = Range(match.range, in: messageText) {
+                messageText = messageText.replacingCharacters(in: range, with: replacement)
+                return
+            }
+        }
+    }
+
+    private func removeMention(_ mention: Mention) {
+        activeMentions.removeAll { $0.id == mention.id }
+
+        // Update mention context
+        Task {
+            await resolveMentionContext()
+        }
+    }
+
+    private func showMentionDetails(_ mention: Mention) {
+        // For files, could open in Finder or show content preview
+        switch mention.type {
+        case .file:
+            let expandedPath = (mention.value as NSString).expandingTildeInPath
+            NSWorkspace.shared.selectFile(expandedPath, inFileViewerRootedAtPath: "")
+        case .folder:
+            let expandedPath = (mention.value as NSString).expandingTildeInPath
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: expandedPath)
+        case .url:
+            if let url = URL(string: mention.value) {
+                NSWorkspace.shared.open(url)
+            }
+        case .project:
+            let expandedPath = (mention.value as NSString).expandingTildeInPath
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: expandedPath)
+        }
+    }
+
+    private func resolveMentionContext() async {
+        guard !activeMentions.isEmpty else {
+            mentionContext = nil
+            return
+        }
+
+        let context = await mentionService.resolveMentions(activeMentions)
+
+        await MainActor.run {
+            mentionContext = context
+            // Update mentions with resolved content
+            activeMentions = context.mentions
+        }
+    }
+
+    // MARK: - File Handling
+
     private func handleDroppedFiles(providers: [NSItemProvider]) -> Bool {
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier("public.file-url") {
@@ -924,8 +1620,8 @@ struct ChatView: View {
     
     private func sendMessage() async {
         let text = messageText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        guard !text.isEmpty || !droppedFiles.isEmpty else { return }
-        
+        guard !text.isEmpty || !droppedFiles.isEmpty || !activeMentions.isEmpty else { return }
+
         // Check API keys for parallel mode
         if viewModel.isParallelMode {
             for provider in viewModel.selectedModels {
@@ -940,11 +1636,31 @@ struct ChatView: View {
                 return
             }
         }
-        
+
         viewModel.error = nil
 
         let isFirstMessage = viewModel.messages.isEmpty
-        
+
+        // Resolve mentions if we have any
+        var contextPrefix = ""
+        var mentionReferences: [Mention] = []
+        if !activeMentions.isEmpty {
+            // Ensure mentions are resolved
+            if mentionContext == nil {
+                await resolveMentionContext()
+            }
+
+            if let context = mentionContext {
+                contextPrefix = context.generateContextString()
+                mentionReferences = context.mentions
+
+                // Show warnings if any
+                for warning in context.warnings {
+                    AppLogger.shared.log("Mention warning: \(warning)", level: .warning)
+                }
+            }
+        }
+
         // Process dropped files as attachments
         var attachments: [MessageAttachment] = []
         for fileURL in droppedFiles {
@@ -959,30 +1675,53 @@ struct ChatView: View {
                 attachments.append(attachment)
             }
         }
-        
+
         // Use text or default message if only files attached
-        let messageContent = text.isEmpty && !attachments.isEmpty ? "Attached \(attachments.count) file\(attachments.count == 1 ? "" : "s")" : text
-        
+        var messageContent = text.isEmpty && !attachments.isEmpty ? "Attached \(attachments.count) file\(attachments.count == 1 ? "" : "s")" : text
+
+        // Prepend mention context to the message content
+        if !contextPrefix.isEmpty {
+            messageContent = contextPrefix + messageContent
+        }
+
+        // Clear input state
         messageText = ""
         droppedFiles = []
+        activeMentions = []
+        mentionContext = nil
+        showMentionSuggestions = false
 
         // Use conversation-specific model if set, otherwise use global
         let conversation = conversationManager.conversations.first(where: { $0.id == conversationId })
         let effectiveProvider = conversation?.selectedProvider ?? container.currentProvider
         let effectiveModel = conversation?.selectedModel ?? selectedModel
 
+        // Build system prompt with project context if available
+        let baseSystemPrompt = systemPromptPrefix.isEmpty ? nil : systemPromptPrefix
+        let enhancedSystemPrompt = viewModel.buildSystemPromptWithProjectContext(basePrompt: baseSystemPrompt)
+
         let configuration = LLMConfiguration(
             provider: effectiveProvider,
             model: effectiveModel,
             temperature: 0.7,
             maxTokens: 4096,
-            systemPrompt: nil,
+            systemPrompt: enhancedSystemPrompt,
             enableChainOfThought: viewModel.showChainOfThought,
             enablePromptEnhancement: enablePromptEnhancement
         )
 
-        let userMessage = messageContent
-        await viewModel.sendMessage(messageContent, configuration: configuration, attachments: attachments.isEmpty ? nil : attachments)
+        // Store the original text (without context prefix) for title generation
+        let originalUserText = text.isEmpty && !attachments.isEmpty
+            ? "Attached \(attachments.count) file\(attachments.count == 1 ? "" : "s")"
+            : text
+
+        // Store mention references with the message for history display
+        await viewModel.sendMessage(
+            messageContent,
+            configuration: configuration,
+            attachments: attachments.isEmpty ? nil : attachments,
+            mentionReferences: mentionReferences.isEmpty ? nil : mentionReferences
+        )
 
         // Update message count
         conversationManager.incrementMessageCount(conversationId)
@@ -992,7 +1731,7 @@ struct ChatView: View {
             Task {
                 await conversationManager.generateTitleAndSummary(
                     for: conversationId,
-                    firstMessage: userMessage,
+                    firstMessage: originalUserText,
                     firstResponse: firstResponse,
                     provider: container.createLLMProvider()
                 )
@@ -1069,7 +1808,7 @@ struct ChatView: View {
             model: selectedModel,
             temperature: 0.7,
             maxTokens: 4096,
-            systemPrompt: nil,
+            systemPrompt: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix,
             enableChainOfThought: viewModel.showChainOfThought,
             enablePromptEnhancement: enablePromptEnhancement
         )
@@ -1152,7 +1891,7 @@ struct ChatView: View {
                 model: selectedModel,
                 temperature: 0.7,
                 maxTokens: 4096,
-                systemPrompt: nil,
+                systemPrompt: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix,
                 enableChainOfThought: viewModel.showChainOfThought,
                 enablePromptEnhancement: enablePromptEnhancement
             )
@@ -1358,19 +2097,19 @@ struct StreamingMessageView: View {
             .markdownTextStyle(\.code) {
                 FontFamilyVariant(.monospaced)
                 FontSize(13)
-                ForegroundColor(.purple)
-                BackgroundColor(Color.purple.opacity(0.1))
+                ForegroundColor(ThemeColors.codeAccent)
+                BackgroundColor(ThemeColors.codeBackground)
             }
             .markdownBlockStyle(\.codeBlock) { configuration in
                 configuration.label
                     .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(ThemeColors.darkSurface)
                     .cornerRadius(8)
             }
             .textSelection(.enabled)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(ThemeColors.darkSurface)
             .cornerRadius(16)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1380,12 +2119,12 @@ struct StreamingMessageView: View {
             // Avatar
             ZStack {
                 Circle()
-                    .fill(Color.purple.opacity(0.2))
+                    .fill(ThemeColors.accent.opacity(0.2))
                     .frame(width: 32, height: 32)
 
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.purple)
+                    .foregroundStyle(ThemeColors.accent)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1404,4 +2143,252 @@ struct StreamingMessageView: View {
             Spacer(minLength: 60)
         }
     }
+}
+
+// MARK: - Error Card Component
+
+/// Error type classification for appropriate icons and actions
+enum ErrorType {
+    case network
+    case apiKey
+    case rateLimit
+    case serverError
+    case timeout
+    case unknown
+
+    var icon: String {
+        switch self {
+        case .network:
+            return "wifi.slash"
+        case .apiKey:
+            return "key.slash"
+        case .rateLimit:
+            return "gauge.with.needle.fill"
+        case .serverError:
+            return "exclamationmark.icloud.fill"
+        case .timeout:
+            return "clock.badge.exclamationmark.fill"
+        case .unknown:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .network:
+            return ThemeColors.warning
+        case .apiKey:
+            return ThemeColors.error
+        case .rateLimit:
+            return ThemeColors.warning
+        case .serverError:
+            return ThemeColors.error
+        case .timeout:
+            return ThemeColors.warning
+        case .unknown:
+            return ThemeColors.warning
+        }
+    }
+
+    var backgroundColor: Color {
+        color.opacity(0.12)
+    }
+
+    var title: String {
+        switch self {
+        case .network:
+            return "Connection Error"
+        case .apiKey:
+            return "API Key Error"
+        case .rateLimit:
+            return "Rate Limited"
+        case .serverError:
+            return "Server Error"
+        case .timeout:
+            return "Request Timeout"
+        case .unknown:
+            return "Error"
+        }
+    }
+
+    var showRetry: Bool {
+        switch self {
+        case .network, .serverError, .timeout, .rateLimit:
+            return true
+        case .apiKey, .unknown:
+            return false
+        }
+    }
+
+    var showSettings: Bool {
+        switch self {
+        case .apiKey:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func classify(_ errorMessage: String) -> ErrorType {
+        let lowercased = errorMessage.lowercased()
+
+        if lowercased.contains("api key") || lowercased.contains("apikey") ||
+           lowercased.contains("unauthorized") || lowercased.contains("authentication") ||
+           lowercased.contains("missing") && lowercased.contains("key") {
+            return .apiKey
+        }
+
+        if lowercased.contains("rate limit") || lowercased.contains("ratelimit") ||
+           lowercased.contains("too many requests") || lowercased.contains("429") {
+            return .rateLimit
+        }
+
+        if lowercased.contains("network") || lowercased.contains("connection") ||
+           lowercased.contains("internet") || lowercased.contains("offline") ||
+           lowercased.contains("unreachable") {
+            return .network
+        }
+
+        if lowercased.contains("timeout") || lowercased.contains("timed out") {
+            return .timeout
+        }
+
+        if lowercased.contains("server") || lowercased.contains("500") ||
+           lowercased.contains("502") || lowercased.contains("503") {
+            return .serverError
+        }
+
+        return .unknown
+    }
+}
+
+/// Actionable error card with context-aware buttons
+struct ErrorCard: View {
+    let error: String
+    let onDismiss: () -> Void
+    let onRetry: (() -> Void)?
+    let onOpenSettings: (() -> Void)?
+
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var errorType: ErrorType {
+        ErrorType.classify(error)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(errorType.backgroundColor)
+                    .frame(width: 36, height: 36)
+
+                Image(systemName: errorType.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(errorType.color)
+            }
+
+            // Content
+            VStack(alignment: .leading, spacing: 2) {
+                Text(errorType.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            // Action buttons
+            HStack(spacing: 8) {
+                if errorType.showRetry, let onRetry = onRetry {
+                    Button {
+                        onRetry()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Retry")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(ThemeColors.accent)
+                        .foregroundStyle(.white)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Retry request")
+                }
+
+                if errorType.showSettings, let onOpenSettings = onOpenSettings {
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Settings")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(ThemeColors.darkSurface)
+                        .foregroundStyle(.primary)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(ThemeColors.darkBorder, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open settings")
+                }
+
+                // Dismiss button
+                Button {
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(ThemeColors.darkSurface)
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss error")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(errorType.backgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(errorType.color.opacity(isHovered ? 0.4 : 0.2), lineWidth: 1)
+        )
+        .onHover { hovering in
+            if reduceMotion {
+                isHovered = hovering
+            } else {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(errorType.title): \(error)")
+    }
+}
+
+// MARK: - Notification Extension for Settings
+
+extension Notification.Name {
+    static let openSettings = Notification.Name("openSettings")
 }

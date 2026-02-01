@@ -1,36 +1,39 @@
 import Foundation
 
 /// Service for detecting and redacting secrets in code output
-class SecretDetector {
+final class SecretDetector: Sendable {
     static let shared = SecretDetector()
     
     private let patterns: [(pattern: String, name: String)] = [
-        // API Keys
-        (#"([a-zA-Z0-9]{32,})"#, "Generic API Key"),
+        // Specific API Keys (must come before generic patterns)
         (#"AKIA[0-9A-Z]{16}"#, "AWS Access Key"),
         (#"sk-[a-zA-Z0-9]{32,}"#, "OpenAI API Key"),
         (#"sk_live_[a-zA-Z0-9]{24,}"#, "Stripe API Key"),
-        
+        (#"sk_test_[a-zA-Z0-9]{24,}"#, "Stripe Test Key"),
+
+        // OAuth (must come before generic token pattern)
+        (#"oauth_token[=:]\s*([a-zA-Z0-9\-_]{20,})"#, "OAuth Token"),
+        (#"oauth_secret[=:]\s*([a-zA-Z0-9\-_]{20,})"#, "OAuth Secret"),
+
         // Tokens
         (#"token[=:]\s*([a-zA-Z0-9\-_]{20,})"#, "Token"),
-        (#"bearer\s+([a-zA-Z0-9\-_\.]{20,})"#, "Bearer Token"),
-        
+        (#"[Bb]earer\s+([a-zA-Z0-9\-_\.]{20,})"#, "Bearer Token"),
+
         // Private Keys
         (#"-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----"#, "Private Key"),
         (#"-----BEGIN PGP PRIVATE KEY BLOCK-----"#, "PGP Private Key"),
-        
+
         // Passwords
         (#"password[=:]\s*([^\s]{8,})"#, "Password"),
         (#"passwd[=:]\s*([^\s]{8,})"#, "Password"),
-        
+
         // Database URLs
         (#"postgresql://[^\s]+"#, "PostgreSQL URL"),
         (#"mysql://[^\s]+"#, "MySQL URL"),
         (#"mongodb://[^\s]+"#, "MongoDB URL"),
-        
-        // OAuth
-        (#"oauth_token[=:]\s*([a-zA-Z0-9\-_]{20,})"#, "OAuth Token"),
-        (#"oauth_secret[=:]\s*([a-zA-Z0-9\-_]{20,})"#, "OAuth Secret"),
+
+        // Generic API Key (last - catches remaining patterns)
+        (#"\b[a-zA-Z0-9]{32,}\b"#, "Generic API Key"),
     ]
     
     private init() {}

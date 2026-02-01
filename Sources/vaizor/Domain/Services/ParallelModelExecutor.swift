@@ -55,9 +55,11 @@ class ParallelModelExecutor: ObservableObject {
     @Published var isExecuting: Bool = false
     @Published var errors: [LLMProvider: Error] = [:]
     @Published var streamingResponses: [LLMProvider: String] = [:]
-    
+
     private let container: DependencyContainer
-    
+    /// Store the current execution task for cancellation support
+    private var currentExecutionTask: Task<[LLMProvider: ModelResponse], Never>?
+
     init(container: DependencyContainer) {
         self.container = container
     }
@@ -75,111 +77,165 @@ class ParallelModelExecutor: ObservableObject {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (LLMProvider, String) -> Void
     ) async -> [LLMProvider: ModelResponse] {
+        // Cancel any existing execution before starting a new one
+        cancel()
+
         await MainActor.run {
             isExecuting = true
             responses = [:]
             errors = [:]
             streamingResponses = [:]
         }
-        
+
         let configurations = config.configurations()
-        var startTimes: [LLMProvider: Date] = [:]
-        
-        await withTaskGroup(of: (LLMProvider, Result<String, Error>).self) { group in
-            // Start all model executions in parallel
-            for (provider, providerConfig) in configurations {
-                // Create provider instance using container's method
-                guard let providerInstance = container.createLLMProvider(for: provider) else {
-                    await MainActor.run {
-                        errors[provider] = NSError(
-                            domain: "ParallelModelExecutor",
-                            code: 2,
-                            userInfo: [NSLocalizedDescriptionKey: "Provider not available or API key not configured"]
-                        )
+
+        // Create and store the execution task so it can be cancelled
+        let executionTask = Task { [weak self] () -> [LLMProvider: ModelResponse] in
+            guard let self else { return [:] }
+
+            var startTimes: [LLMProvider: Date] = [:]
+            var localResponses: [LLMProvider: ModelResponse] = [:]
+
+            await withTaskGroup(of: (LLMProvider, Result<String, Error>).self) { group in
+                // Start all model executions in parallel
+                for (provider, providerConfig) in configurations {
+                    // Check for cancellation before starting each provider
+                    guard !Task.isCancelled else { break }
+
+                    // Create provider instance using container's method
+                    guard let providerInstance = await MainActor.run(body: { self.container.createLLMProvider(for: provider) }) else {
+                        await MainActor.run {
+                            self.errors[provider] = NSError(
+                                domain: "ParallelModelExecutor",
+                                code: 2,
+                                userInfo: [NSLocalizedDescriptionKey: "Provider not available or API key not configured"]
+                            )
+                        }
+                        continue
                     }
-                    continue
+
+                    startTimes[provider] = Date()
+
+                    group.addTask {
+                        // Check for cancellation at the start of each task
+                        guard !Task.isCancelled else {
+                            return (provider, .failure(CancellationError()))
+                        }
+
+                        do {
+                            let accumulator = ResponseAccumulator()
+
+                            try await providerInstance.streamMessage(
+                                text,
+                                configuration: providerConfig,
+                                conversationHistory: conversationHistory,
+                                onChunk: { chunk in
+                                    // Check cancellation before processing chunk
+                                    guard !Task.isCancelled else { return }
+                                    onChunk(provider, chunk)
+                                    Task {
+                                        await accumulator.append(chunk)
+                                    }
+                                },
+                                onThinkingStatusUpdate: { _ in }
+                            )
+
+                            // Check cancellation before returning result
+                            guard !Task.isCancelled else {
+                                return (provider, .failure(CancellationError()))
+                            }
+
+                            let fullResponse = await accumulator.current()
+                            return (provider, .success(fullResponse))
+                        } catch {
+                            return (provider, .failure(error))
+                        }
+                    }
                 }
-                
-                startTimes[provider] = Date()
-                
-                group.addTask {
-                    do {
-                        let accumulator = ResponseAccumulator()
-                        
-                        try await providerInstance.streamMessage(
-                            text,
-                            configuration: providerConfig,
-                            conversationHistory: conversationHistory,
-                            onChunk: { chunk in
-                                onChunk(provider, chunk)
-                                Task {
-                                    await accumulator.append(chunk)
-                                }
-                            },
-                            onThinkingStatusUpdate: { _ in }
-                        )
-                        
-                        let fullResponse = await accumulator.current()
-                        return (provider, .success(fullResponse))
-                    } catch {
-                        return (provider, .failure(error))
+
+                // Collect results as they complete
+                for await (provider, result) in group {
+                    // Check for cancellation while collecting results
+                    guard !Task.isCancelled else { break }
+
+                    let startTime = startTimes[provider] ?? Date()
+                    let latency = Date().timeIntervalSince(startTime)
+                    guard let providerConfig = configurations[provider] else {
+                        continue // Skip if configuration not found
                     }
-                }
-            }
-            
-            // Collect results as they complete
-            for await (provider, result) in group {
-                let startTime = startTimes[provider] ?? Date()
-                let latency = Date().timeIntervalSince(startTime)
-                let providerConfig = configurations[provider]!
-                
-                switch result {
-                case .success(let response):
-                    let modelResponse = ModelResponse(
-                        provider: provider,
-                        model: providerConfig.model,
-                        response: response,
-                        error: nil,
-                        latency: latency,
-                        tokenCount: nil, // TODO: Extract from provider if available
-                        completedAt: Date()
-                    )
-                    
-                    await MainActor.run {
-                        responses[provider] = modelResponse
-                        errors.removeValue(forKey: provider)
-                        streamingResponses[provider] = response
-                    }
-                    
-                case .failure(let error):
-                    await MainActor.run {
-                        errors[provider] = error
+
+                    switch result {
+                    case .success(let response):
+                        // Estimate token count (~4 chars per token for English text)
+                        // Note: Actual token counts would require provider-specific parsing
+                        // of response metadata, which varies by API and isn't available during streaming
+                        let estimatedTokens = response.count / 4
+
                         let modelResponse = ModelResponse(
                             provider: provider,
                             model: providerConfig.model,
-                            response: "",
-                            error: error,
+                            response: response,
+                            error: nil,
                             latency: latency,
-                            tokenCount: nil,
+                            tokenCount: estimatedTokens,
                             completedAt: Date()
                         )
-                        responses[provider] = modelResponse
+
+                        localResponses[provider] = modelResponse
+
+                        await MainActor.run {
+                            self.responses[provider] = modelResponse
+                            self.errors.removeValue(forKey: provider)
+                            self.streamingResponses[provider] = response
+                        }
+
+                    case .failure(let error):
+                        // Don't report cancellation errors as real errors
+                        if !(error is CancellationError) {
+                            let modelResponse = ModelResponse(
+                                provider: provider,
+                                model: providerConfig.model,
+                                response: "",
+                                error: error,
+                                latency: latency,
+                                tokenCount: nil,
+                                completedAt: Date()
+                            )
+                            localResponses[provider] = modelResponse
+
+                            await MainActor.run {
+                                self.errors[provider] = error
+                                self.responses[provider] = modelResponse
+                            }
+                        }
                     }
                 }
             }
+
+            return localResponses
         }
-        
+
+        currentExecutionTask = executionTask
+
+        let result = await executionTask.value
+
         await MainActor.run {
             isExecuting = false
+            currentExecutionTask = nil
         }
-        
-        return responses
+
+        return result
     }
-    
+
     /// Cancel all ongoing executions
     func cancel() {
-        // Note: Individual tasks will need to check cancellation
-        // This is a placeholder for cancellation logic
+        currentExecutionTask?.cancel()
+        currentExecutionTask = nil
         isExecuting = false
+    }
+
+    deinit {
+        // Ensure task is cancelled when executor is deallocated
+        currentExecutionTask?.cancel()
     }
 }

@@ -11,6 +11,7 @@ struct Conversation: Identifiable, Codable {
     var selectedProvider: LLMProvider?
     var selectedModel: String?
     var folderId: UUID?
+    var projectId: UUID?
     var tags: [String]
     var isFavorite: Bool
 
@@ -25,6 +26,7 @@ struct Conversation: Identifiable, Codable {
         selectedProvider: LLMProvider? = nil,
         selectedModel: String? = nil,
         folderId: UUID? = nil,
+        projectId: UUID? = nil,
         tags: [String] = [],
         isFavorite: Bool = false
     ) {
@@ -38,6 +40,7 @@ struct Conversation: Identifiable, Codable {
         self.selectedProvider = selectedProvider
         self.selectedModel = selectedModel
         self.folderId = folderId
+        self.projectId = projectId
         self.tags = tags
         self.isFavorite = isFavorite
     }

@@ -83,15 +83,43 @@ struct SlashCommandView: View {
     }
 
     private var mcpCommands: [SlashCommand] {
-        container.mcpManager.availableTools.map { tool in
-            SlashCommand(
+        var commands: [SlashCommand] = []
+
+        // Add tools
+        for tool in container.mcpManager.availableTools {
+            commands.append(SlashCommand(
                 name: tool.name,
                 description: tool.description,
                 icon: "wrench.and.screwdriver",
                 category: .mcp,
                 action: { }
-            )
+            ))
         }
+
+        // Add resources
+        for resource in container.mcpManager.availableResources {
+            commands.append(SlashCommand(
+                name: "resource:\(resource.name)",
+                description: resource.description ?? "Read resource: \(resource.uri)",
+                icon: "doc.text.fill",
+                category: .mcp,
+                action: { },
+                value: resource.uri
+            ))
+        }
+
+        // Add prompts
+        for prompt in container.mcpManager.availablePrompts {
+            commands.append(SlashCommand(
+                name: "prompt:\(prompt.name)",
+                description: prompt.description ?? "Use prompt template",
+                icon: "text.bubble.fill",
+                category: .mcp,
+                action: { }
+            ))
+        }
+
+        return commands
     }
 
     private var templateCommands: [SlashCommand] {
@@ -122,7 +150,7 @@ struct SlashCommandView: View {
 
         let filteredMCP = filterCommands(mcpCommands)
         if !filteredMCP.isEmpty {
-            groups.append(SlashCommandGroup(title: "MCP Tools", commands: filteredMCP))
+            groups.append(SlashCommandGroup(title: "MCP (Tools, Resources, Prompts)", commands: filteredMCP))
         }
 
         return groups

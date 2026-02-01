@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox - Required for Mac App Store, recommended for notarization -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Network Access - Required for API calls to LLM providers -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- File Access - User-selected files for chat imports/exports -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- Downloads folder access for saving exports -->
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+
+    <!-- Keychain access for storing API keys securely -->
+    <key>com.apple.security.keychain.add-or-modify</key>
+    <true/>
+    <key>com.apple.security.keychain.access</key>
+    <true/>
+</dict>
+</plist>

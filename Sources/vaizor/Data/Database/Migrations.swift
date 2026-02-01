@@ -229,6 +229,84 @@ func makeMigrator() -> DatabaseMigrator {
             t.column("path", .text)
         }
     }
+    
+    migrator.registerMigration("createWhiteboards") { db in
+        try db.create(table: "whiteboards") { t in
+            t.column("id", .text).primaryKey()
+            t.column("conversation_id", .text)
+                .indexed()
+                .references("conversations", onDelete: .cascade)
+            t.column("title", .text).notNull()
+            t.column("content", .text).notNull().defaults(to: "{}")
+            t.column("created_at", .double).notNull()
+            t.column("updated_at", .double).notNull()
+            t.column("thumbnail", .blob)
+            t.column("tags", .text)
+            t.column("is_shared", .boolean).notNull().defaults(to: false)
+        }
+        
+        try db.create(index: "idx_whiteboards_conversation_id", on: "whiteboards", columns: ["conversation_id"])
+        try db.create(index: "idx_whiteboards_created_at", on: "whiteboards", columns: ["created_at"])
+        try db.create(index: "idx_whiteboards_updated_at", on: "whiteboards", columns: ["updated_at"])
+    }
+
+    migrator.registerMigration("createProjects") { db in
+        try db.create(table: "projects") { t in
+            t.column("id", .text).primaryKey()
+            t.column("name", .text).notNull()
+            t.column("conversations", .text)  // JSON array of conversation IDs
+            t.column("context", .text)        // JSON-encoded ProjectContext
+            t.column("created_at", .double).notNull()
+            t.column("updated_at", .double).notNull()
+            t.column("is_archived", .boolean).notNull().defaults(to: false)
+            t.column("icon_name", .text)
+            t.column("color", .text)
+        }
+
+        try db.create(index: "idx_projects_updated_at", on: "projects", columns: ["updated_at"])
+        try db.create(index: "idx_projects_is_archived", on: "projects", columns: ["is_archived"])
+    }
+
+    migrator.registerMigration("addConversationProjectId") { db in
+        // Check if column already exists to avoid errors on re-run
+        let columns = try db.columns(in: "conversations")
+        if !columns.contains(where: { $0.name == "project_id" }) {
+            try db.alter(table: "conversations") { t in
+                t.add(column: "project_id", .text)
+            }
+
+            try db.create(
+                index: "idx_conversations_project_id",
+                on: "conversations",
+                columns: ["project_id"]
+            )
+        }
+    }
+
+    migrator.registerMigration("addMCPServerEnvAndWorkingDir") { db in
+        let columns = try db.columns(in: "mcp_servers")
+
+        // Add env column (JSON-encoded dictionary)
+        if !columns.contains(where: { $0.name == "env" }) {
+            try db.alter(table: "mcp_servers") { t in
+                t.add(column: "env", .text)  // JSON: {"KEY": "value", ...}
+            }
+        }
+
+        // Add working_directory column
+        if !columns.contains(where: { $0.name == "working_directory" }) {
+            try db.alter(table: "mcp_servers") { t in
+                t.add(column: "working_directory", .text)
+            }
+        }
+
+        // Add source_config column (where the server was imported from)
+        if !columns.contains(where: { $0.name == "source_config" }) {
+            try db.alter(table: "mcp_servers") { t in
+                t.add(column: "source_config", .text)
+            }
+        }
+    }
 
     return migrator
 }

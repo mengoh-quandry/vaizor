@@ -95,6 +95,30 @@ actor ConversationRepository {
         }
     }
 
+    func getLastMessagePreview(for conversationId: UUID, maxLength: Int = 100) async -> String? {
+        let conversationIdString = conversationId.uuidString
+        do {
+            return try await dbQueue.read { db in
+                if let lastMessage = try MessageRecord
+                    .filter(Column("conversation_id") == conversationIdString)
+                    .order(Column("created_at").desc, Column("id").desc)
+                    .limit(1)
+                    .fetchOne(db) {
+                    let preview = lastMessage.content
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: "\n", with: " ")
+                    return String(preview.prefix(maxLength))
+                }
+                return nil
+            }
+        } catch {
+            await MainActor.run {
+                AppLogger.shared.logError(error, context: "Failed to get last message preview for conversation \(conversationIdString)")
+            }
+            return nil
+        }
+    }
+
     func saveMessage(_ message: Message) async {
         do {
             try await dbQueue.write { db in
@@ -108,7 +132,10 @@ actor ConversationRepository {
         }
     }
 
-    func deleteConversation(_ conversationId: UUID) async {
+    /// Delete a conversation and all associated data
+    /// - Returns: true if deletion succeeded, false otherwise
+    @discardableResult
+    func deleteConversation(_ conversationId: UUID) async -> Bool {
         do {
             try await dbQueue.write { db in
                 // Delete conversation - cascade deletes will automatically remove:
@@ -124,10 +151,12 @@ actor ConversationRepository {
             await MainActor.run {
                 AppLogger.shared.log("Deleted conversation \(conversationId) and all associated data", level: .info)
             }
+            return true
         } catch {
             await MainActor.run {
                 AppLogger.shared.logError(error, context: "Failed to delete conversation \(conversationId)")
             }
+            return false
         }
     }
     

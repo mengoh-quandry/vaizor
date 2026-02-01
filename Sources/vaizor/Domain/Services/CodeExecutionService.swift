@@ -16,11 +16,35 @@ class CodeExecutionService {
     }
     
     private var runtimeAdapters: [CodeLanguage: RuntimeAdapter] = [:]
-    
+    private var shellAdapters: [ShellType: ShellRuntimeAdapter] = [:]
+
     private init() {
         // Initialize runtime adapters
         runtimeAdapters[.python] = PythonRuntimeAdapter()
-        // Add more adapters as needed
+
+        // Initialize shell adapters
+        for shell in ShellType.allCases {
+            shellAdapters[shell] = ShellRuntimeAdapter(shellType: shell)
+        }
+
+        // Map shell languages to their adapters
+        runtimeAdapters[.bash] = shellAdapters[.bash]
+        runtimeAdapters[.zsh] = shellAdapters[.zsh]
+        runtimeAdapters[.powershell] = shellAdapters[.powershell]
+
+        AppLogger.shared.log("CodeExecutionService initialized with shell support", level: .info)
+        logShellAvailability()
+    }
+
+    /// Log available shells for debugging
+    private func logShellAvailability() {
+        for (shell, available, path) in ShellType.systemShellStatus() {
+            if available {
+                AppLogger.shared.log("\(shell.displayName) available at: \(path ?? "unknown")", level: .debug)
+            } else {
+                AppLogger.shared.log("\(shell.displayName) not available", level: .debug)
+            }
+        }
     }
     
     /// Execute code request in sandbox

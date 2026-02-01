@@ -1,9 +1,19 @@
 import SwiftUI
 
+// Dark theme colors for MCP views
+private let mcpDarkBase = Color(hex: "1c1d1f")
+private let mcpDarkSurface = Color(hex: "232426")
+private let mcpDarkBorder = Color(hex: "2d2e30")
+private let mcpTextPrimary = Color.white
+private let mcpTextSecondary = Color(hex: "808080")
+private let mcpAccent = Color(hex: "00976d")
+private let mcpInfo = Color(hex: "5a9bd5")
+
 struct MCPSettingsView: View {
     @EnvironmentObject var container: DependencyContainer
     @Environment(\.dismiss) var dismiss
     @State private var showAddServer = false
+    @State private var showDiscoverServers = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,52 +26,63 @@ struct MCPSettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
                 Text("MCP Servers")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(mcpTextPrimary)
 
                 Spacer()
+
+                Button {
+                    showDiscoverServers = true
+                } label: {
+                    Label("Discover", systemImage: "magnifyingglass")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .tint(mcpAccent)
 
                 Button {
                     showAddServer = true
                 } label: {
                     Label("Add Server", systemImage: "plus.circle.fill")
-                        .font(.subheadline)
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(mcpAccent)
 
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(mcpTextSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding()
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(mcpDarkBase)
 
-            Divider()
+            Rectangle().fill(mcpDarkBorder).frame(height: 1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     // Info box
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "info.circle.fill")
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(mcpInfo)
                             .font(.title3)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Model Context Protocol (MCP)")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(mcpTextPrimary)
 
                             Text("MCP servers extend your AI's capabilities with tools, resources, and prompts. Add servers below to enable features like file system access, web search, database queries, and more.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(mcpTextSecondary)
                         }
                     }
                     .padding()
-                    .background(Color.blue.opacity(0.1))
+                    .background(mcpInfo.opacity(0.12))
                     .cornerRadius(12)
 
                     // Server list
@@ -74,12 +95,12 @@ struct MCPSettingsView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
                             Text("No MCP Servers")
-                                .font(.title3)
-                                .fontWeight(.semibold)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(mcpTextPrimary)
 
                             Text("Add your first MCP server to extend Ollama's capabilities")
-                                .font(.body)
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 13))
+                                .foregroundStyle(mcpTextSecondary)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 300)
 
@@ -87,8 +108,10 @@ struct MCPSettingsView: View {
                                 showAddServer = true
                             } label: {
                                 Label("Add MCP Server", systemImage: "plus")
+                                    .font(.system(size: 12, weight: .medium))
                             }
                             .buttonStyle(.borderedProminent)
+                            .tint(mcpAccent)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 60)
@@ -102,10 +125,16 @@ struct MCPSettingsView: View {
                 }
                 .padding(20)
             }
+            .background(mcpDarkBase)
         }
         .frame(minWidth: 650, idealWidth: 750, maxWidth: 900, minHeight: 500, idealHeight: 600, maxHeight: 800)
+        .background(mcpDarkBase)
         .sheet(isPresented: $showAddServer) {
             AddMCPServerView()
+                .environmentObject(container)
+        }
+        .sheet(isPresented: $showDiscoverServers) {
+            MCPDiscoveryView()
                 .environmentObject(container)
         }
     }
@@ -144,21 +173,21 @@ struct MCPServerRow: View {
                     .buttonStyle(.plain)
                 }
                 .padding(8)
-                .background(Color.orange.opacity(0.1))
+                .background(Color(hex: "d4a017").opacity(0.12))
                 .cornerRadius(6)
             }
-            
+
             // Toast notification
             if showToast {
                 ToastView(message: toastMessage, isPresented: $showToast)
                     .padding(.bottom, 4)
             }
-            
+
             HStack(alignment: .center, spacing: 12) {
                 // Status indicator and name
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(isRunning ? Color.green : (container.mcpManager.serverErrors[server.id] != nil ? Color.orange : Color.gray))
+                        .fill(isRunning ? mcpAccent : (container.mcpManager.serverErrors[server.id] != nil ? Color(hex: "d4a017") : mcpTextSecondary))
                         .frame(width: 8, height: 8)
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -282,7 +311,7 @@ struct MCPServerRow: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(mcpDarkSurface)
         .cornerRadius(12)
         .frame(maxWidth: .infinity)
         .sheet(isPresented: $showEdit) {
@@ -369,10 +398,11 @@ struct AddMCPServerView: View {
             // Header
             HStack {
                 Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(mcpAccent)
 
                 Text("Add MCP Server")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(mcpTextPrimary)
 
                 Spacer()
 
@@ -381,72 +411,27 @@ struct AddMCPServerView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(mcpTextSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding()
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(mcpDarkBase)
 
-            Divider()
+            Rectangle().fill(mcpDarkBorder).frame(height: 1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Server Name")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., filesystem, weather, database", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Description (Optional)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("Brief description of what this server does", text: $description)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Command")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., npx, node, python3", text: $command)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-
-                        Text("The executable to run (must be in PATH or use full path)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Arguments (Optional)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., -m mcp_server_name", text: $args)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-
-                        Text("Space-separated arguments to pass to the command")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    MCPFormField(label: "Server Name", placeholder: "e.g., filesystem, weather, database", text: $name)
+                    MCPFormField(label: "Description (Optional)", placeholder: "Brief description of what this server does", text: $description)
+                    MCPFormField(label: "Command", placeholder: "e.g., npx, node, python3", text: $command, hint: "The executable to run (must be in PATH or use full path)")
+                    MCPFormField(label: "Arguments (Optional)", placeholder: "e.g., -m mcp_server_name", text: $args, hint: "Space-separated arguments to pass to the command")
 
                     // Example
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Example Configuration")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(mcpTextPrimary)
 
                         VStack(alignment: .leading, spacing: 4) {
                             ExampleField(label: "Name", value: "filesystem")
@@ -455,19 +440,20 @@ struct AddMCPServerView: View {
                             ExampleField(label: "Arguments", value: "-y @modelcontextprotocol/server-filesystem /Users/username/Documents")
                         }
                         .padding(12)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(mcpDarkSurface)
                         .cornerRadius(8)
                     }
 
                     if showError {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color(hex: "d4a017"))
                             Text(errorMessage)
-                                .font(.caption)
+                                .font(.system(size: 12))
+                                .foregroundStyle(mcpTextPrimary)
                         }
                         .padding(8)
-                        .background(Color.orange.opacity(0.1))
+                        .background(Color(hex: "d4a017").opacity(0.12))
                         .cornerRadius(8)
                     }
 
@@ -476,20 +462,29 @@ struct AddMCPServerView: View {
                             dismiss()
                         }
                         .buttonStyle(.bordered)
+                        .foregroundStyle(mcpTextSecondary)
 
                         Spacer()
 
-                        Button("Add Server") {
+                        Button {
                             addServer()
+                        } label: {
+                            Text("Add Server")
+                                .fontWeight(.medium)
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(mcpAccent)
                         .disabled(name.isEmpty || command.isEmpty)
                     }
+                    .padding(.top, 8)
                 }
                 .padding(20)
             }
+            .scrollContentBackground(.hidden)
+            .background(mcpDarkBase)
         }
         .frame(minWidth: 550, idealWidth: 650, maxWidth: 800, minHeight: 550, idealHeight: 650, maxHeight: 750)
+        .background(mcpDarkBase)
     }
 
     private func addServer() {
@@ -522,13 +517,49 @@ struct ExampleField: View {
     var body: some View {
         HStack(alignment: .top) {
             Text(label + ":")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(mcpTextSecondary)
                 .frame(width: 80, alignment: .leading)
 
             Text(value)
-                .font(.caption)
+                .font(.system(size: 11))
+                .foregroundStyle(mcpTextPrimary)
                 .textSelection(.enabled)
+        }
+    }
+}
+
+// MARK: - MCP Form Field
+
+struct MCPFormField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var hint: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(mcpTextPrimary)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(10)
+                .background(mcpDarkSurface)
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(mcpDarkBorder, lineWidth: 1)
+                )
+
+            if let hint = hint {
+                Text(hint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(mcpTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -557,10 +588,11 @@ struct EditMCPServerView: View {
             // Header
             HStack {
                 Image(systemName: "pencil.circle.fill")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(mcpAccent)
 
                 Text("Edit MCP Server")
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(mcpTextPrimary)
 
                 Spacer()
 
@@ -569,76 +601,50 @@ struct EditMCPServerView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(mcpTextSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding()
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(mcpDarkBase)
 
-            Divider()
+            Rectangle().fill(mcpDarkBorder).frame(height: 1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Server Name")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., filesystem, weather, database", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Description (Optional)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("Brief description of what this server does", text: $description)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Command")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., npx, node, python3", text: $command)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Arguments (Optional)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        TextField("e.g., -m mcp_server_name", text: $args)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
-                    }
+                    MCPFormField(label: "Server Name", placeholder: "e.g., filesystem, weather, database", text: $name)
+                    MCPFormField(label: "Description (Optional)", placeholder: "Brief description of what this server does", text: $description)
+                    MCPFormField(label: "Command", placeholder: "e.g., npx, node, python3", text: $command)
+                    MCPFormField(label: "Arguments (Optional)", placeholder: "e.g., -m mcp_server_name", text: $args)
 
                     HStack {
                         Button("Cancel") {
                             dismiss()
                         }
                         .buttonStyle(.bordered)
+                        .foregroundStyle(mcpTextSecondary)
 
                         Spacer()
 
-                        Button("Save Changes") {
+                        Button {
                             saveChanges()
+                        } label: {
+                            Text("Save Changes")
+                                .fontWeight(.medium)
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(mcpAccent)
                         .disabled(name.isEmpty || command.isEmpty)
                     }
+                    .padding(.top, 8)
                 }
                 .padding(20)
             }
+            .scrollContentBackground(.hidden)
+            .background(mcpDarkBase)
         }
         .frame(minWidth: 550, idealWidth: 650, maxWidth: 800, minHeight: 450, idealHeight: 550, maxHeight: 700)
+        .background(mcpDarkBase)
     }
 
     private func saveChanges() {

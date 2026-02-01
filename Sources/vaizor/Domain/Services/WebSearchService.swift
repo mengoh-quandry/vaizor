@@ -107,14 +107,20 @@ class WebSearchService {
                 }
             }
             
-            // If no results from DuckDuckGo, try a web search fallback
+            // If no results from Instant Answer API, try HTML search
             if results.isEmpty {
-                // Fallback: Return a search URL suggestion
+                AppLogger.shared.log("No instant answer, trying HTML search fallback", level: .info)
+                let htmlResults = try await performHTMLSearch(query: sanitizedQuery, maxResults: maxResults)
+                results.append(contentsOf: htmlResults)
+            }
+
+            // If still no results, return search URL
+            if results.isEmpty {
                 let searchURL = "https://duckduckgo.com/?q=\(encodedQuery)"
                 results.append(WebSearchResult(
                     title: "Search: \(sanitizedQuery)",
                     url: searchURL,
-                    snippet: "No instant answer available. Click to search DuckDuckGo.",
+                    snippet: "No search results found. Click to search DuckDuckGo directly.",
                     source: "DuckDuckGo"
                 ))
             }
@@ -169,10 +175,106 @@ class WebSearchService {
     private func checkRateLimit() throws {
         // Remove timestamps older than 1 minute
         requestTimestamps.removeAll { Date().timeIntervalSince($0) > 60 }
-        
+
         if requestTimestamps.count >= maxRequestsPerMinute {
             throw WebSearchError.rateLimitExceeded
         }
+    }
+
+    /// Perform HTML-based search as fallback
+    private func performHTMLSearch(query: String, maxResults: Int) async throws -> [WebSearchResult] {
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(string: "https://html.duckduckgo.com/html/?q=\(encodedQuery)") else {
+            return []
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15.0
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode),
+                  let html = String(data: data, encoding: .utf8) else {
+                return []
+            }
+
+            return parseHTMLSearchResults(html: html, maxResults: maxResults)
+        } catch {
+            AppLogger.shared.logError(error, context: "HTML search failed")
+            return []
+        }
+    }
+
+    /// Parse HTML search results from DuckDuckGo
+    private func parseHTMLSearchResults(html: String, maxResults: Int) -> [WebSearchResult] {
+        var results: [WebSearchResult] = []
+
+        // Simpler pattern matching for DuckDuckGo HTML structure
+        let titlePattern = #"<a class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>([^<]*)</a>"#
+        let snippetPattern = #"<a class=\"result__snippet\"[^>]*>([^<]*)</a>"#
+
+        // Find all title+URL matches
+        let titleRegex = try? NSRegularExpression(pattern: titlePattern, options: [.caseInsensitive, .dotMatchesLineSeparators])
+        let snippetRegex = try? NSRegularExpression(pattern: snippetPattern, options: [.caseInsensitive, .dotMatchesLineSeparators])
+
+        let titleMatches = titleRegex?.matches(in: html, range: NSRange(html.startIndex..., in: html)) ?? []
+        let snippetMatches = snippetRegex?.matches(in: html, range: NSRange(html.startIndex..., in: html)) ?? []
+
+        for (index, match) in titleMatches.enumerated() where index < maxResults {
+            guard let urlRange = Range(match.range(at: 1), in: html),
+                  let titleRange = Range(match.range(at: 2), in: html) else { continue }
+
+            let rawUrl = String(html[urlRange])
+            let title = String(html[titleRange])
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Decode DuckDuckGo redirect URL
+            var finalUrl = rawUrl
+            if rawUrl.contains("uddg=") {
+                if let urlParam = URLComponents(string: rawUrl)?.queryItems?.first(where: { $0.name == "uddg" })?.value {
+                    finalUrl = urlParam
+                }
+            }
+
+            // Skip ads and internal links
+            guard !finalUrl.contains("duckduckgo.com"),
+                  finalUrl.hasPrefix("http") else { continue }
+
+            // Get corresponding snippet if available
+            var snippet = ""
+            if index < snippetMatches.count {
+                let snippetMatch = snippetMatches[index]
+                if let snippetRange = Range(snippetMatch.range(at: 1), in: html) {
+                    snippet = String(html[snippetRange])
+                        .replacingOccurrences(of: "&amp;", with: "&")
+                        .replacingOccurrences(of: "&lt;", with: "<")
+                        .replacingOccurrences(of: "&gt;", with: ">")
+                        .replacingOccurrences(of: "<b>", with: "")
+                        .replacingOccurrences(of: "</b>", with: "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+
+            if !title.isEmpty {
+                results.append(WebSearchResult(
+                    title: title,
+                    url: finalUrl,
+                    snippet: snippet.isEmpty ? "No description available" : snippet,
+                    source: "DuckDuckGo"
+                ))
+            }
+        }
+
+        return results
     }
 }
 

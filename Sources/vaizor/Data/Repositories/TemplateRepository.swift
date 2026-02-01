@@ -24,36 +24,47 @@ actor TemplateRepository {
         }
     }
     
-    func saveTemplate(_ template: ConversationTemplate) async {
+    /// Save a template to the database
+    /// - Returns: true if save succeeded, false otherwise
+    @discardableResult
+    func saveTemplate(_ template: ConversationTemplate) async -> Bool {
         do {
             try await dbQueue.write { db in
                 try TemplateRecord(template).insert(db)
             }
+            return true
         } catch {
             await MainActor.run {
                 AppLogger.shared.logError(error, context: "Failed to save template \(template.id)")
             }
+            return false
         }
     }
-    
-    func deleteTemplate(_ templateId: UUID) async {
+
+    /// Delete a template from the database
+    /// - Returns: true if deletion succeeded, false otherwise
+    @discardableResult
+    func deleteTemplate(_ templateId: UUID) async -> Bool {
         do {
             try await dbQueue.write { db in
                 _ = try TemplateRecord
                     .filter(Column("id") == templateId.uuidString)
                     .deleteAll(db)
             }
+            return true
         } catch {
             await MainActor.run {
                 AppLogger.shared.logError(error, context: "Failed to delete template \(templateId)")
             }
+            return false
         }
     }
     
     func updateTemplate(_ template: ConversationTemplate) async {
         do {
             try await dbQueue.write { db in
-                try TemplateRecord(template).update(db)
+                // Use save() for upsert behavior - safer than update() which fails if record doesn't exist
+                try TemplateRecord(template).save(db)
             }
         } catch {
             await MainActor.run {
