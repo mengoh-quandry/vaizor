@@ -1,8 +1,40 @@
 import Foundation
 
+/// Represents a parsed tool call from Ollama's response
+struct OllamaToolCall: Sendable {
+    let name: String
+    let arguments: [String: Any]
+
+    var argumentsJSON: String {
+        guard let data = try? JSONSerialization.data(withJSONObject: arguments),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
+    }
+}
+
+/// Tool execution result
+struct ToolExecutionResult: Sendable {
+    let toolName: String
+    let success: Bool
+    let result: String
+    let artifact: Artifact?
+
+    init(toolName: String, success: Bool, result: String, artifact: Artifact? = nil) {
+        self.toolName = toolName
+        self.success = success
+        self.result = result
+        self.artifact = artifact
+    }
+}
+
 class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
     /// Default base URL for Ollama API
     private static let defaultBaseURL = "http://localhost:11434"
+
+    /// Maximum number of tool call iterations to prevent infinite loops
+    private static let maxToolIterations = 10
 
     /// Get the configured Ollama URL from AppSettings (must be called from async context)
     func getBaseURL() async -> String {
@@ -214,17 +246,508 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         }
 
         var fullResponse = ""
+        var pendingToolCalls: [OllamaToolCall] = []
+        var currentMessages = messages
+
+        // Tool execution loop - keep processing until we get a final response or hit iteration limit
+        var iteration = 0
+        while iteration < Self.maxToolIterations {
+            iteration += 1
+
+            // Stream the response
+            let streamResult = try await streamOllamaResponse(
+                url: url,
+                body: body,
+                currentMessages: currentMessages,
+                toolSchemas: toolSchemas,
+                configuration: configuration,
+                onChunk: onChunk
+            )
+
+            fullResponse += streamResult.content
+
+            // If no tool calls, we're done
+            if streamResult.toolCalls.isEmpty {
+                break
+            }
+
+            // Execute tool calls
+            onThinkingStatusUpdate("Executing \(streamResult.toolCalls.count) tool(s)...")
+
+            for toolCall in streamResult.toolCalls {
+                onThinkingStatusUpdate("Running \(toolCall.name)...")
+
+                let result = await executeToolCall(toolCall, onArtifactCreated: onArtifactCreated)
+
+                // Add assistant message with tool call
+                let assistantMessage: [String: Any] = [
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [[
+                        "function": [
+                            "name": toolCall.name,
+                            "arguments": toolCall.arguments
+                        ]
+                    ]]
+                ]
+                currentMessages.append(assistantMessage)
+
+                // Add tool response
+                let toolMessage: [String: Any] = [
+                    "role": "tool",
+                    "content": result.result
+                ]
+                currentMessages.append(toolMessage)
+            }
+
+            // Update body with new messages for next iteration
+            body["messages"] = currentMessages
+        }
+
+        if iteration >= Self.maxToolIterations {
+            onChunk("\n\n[Tool execution limit reached]")
+        }
+    }
+
+    /// Stream Ollama response and parse tool calls
+    private func streamOllamaResponse(
+        url: URL,
+        body: [String: Any],
+        currentMessages: [[String: Any]],
+        toolSchemas: [[String: Any]],
+        configuration: LLMConfiguration,
+        onChunk: @escaping @Sendable (String) -> Void
+    ) async throws -> (content: String, toolCalls: [OllamaToolCall]) {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var requestBody = body
+        requestBody["messages"] = currentMessages
+        if !toolSchemas.isEmpty {
+            requestBody["tools"] = toolSchemas
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.httpMaximumConnectionsPerHost = 10
+        sessionConfig.timeoutIntervalForRequest = 300
+        sessionConfig.timeoutIntervalForResource = 600
+        let session = URLSession(configuration: sessionConfig)
+
+        let (asyncBytes, response) = try await session.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw NSError(domain: "OllamaProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to connect to Ollama"])
+        }
+
+        var content = ""
+        var toolCalls: [OllamaToolCall] = []
 
         for try await line in asyncBytes.lines {
             guard !line.isEmpty else { continue }
 
             if let data = line.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let messageContent = json["message"] as? [String: Any],
-               let content = messageContent["content"] as? String {
-                fullResponse += content
-                onChunk(content)
+               let messageContent = json["message"] as? [String: Any] {
+
+                // Check for regular content
+                if let textContent = messageContent["content"] as? String, !textContent.isEmpty {
+                    content += textContent
+                    onChunk(textContent)
+                }
+
+                // Check for tool calls
+                if let toolCallsArray = messageContent["tool_calls"] as? [[String: Any]] {
+                    for toolCallDict in toolCallsArray {
+                        if let function = toolCallDict["function"] as? [String: Any],
+                           let name = function["name"] as? String {
+                            let arguments = function["arguments"] as? [String: Any] ?? [:]
+                            toolCalls.append(OllamaToolCall(name: name, arguments: arguments))
+                        }
+                    }
+                }
             }
+        }
+
+        return (content, toolCalls)
+    }
+
+    /// Execute a tool call and return the result
+    private func executeToolCall(
+        _ toolCall: OllamaToolCall,
+        onArtifactCreated: (@Sendable (Artifact) -> Void)?
+    ) async -> ToolExecutionResult {
+        switch toolCall.name {
+        case "web_search":
+            return await executeWebSearch(toolCall.arguments)
+
+        case "execute_code":
+            return await executeCode(toolCall.arguments)
+
+        case "execute_shell":
+            return await executeShell(toolCall.arguments)
+
+        case "create_artifact":
+            return await createArtifact(toolCall.arguments, onArtifactCreated: onArtifactCreated)
+
+        case "browser_action":
+            return await executeBrowserAction(toolCall.arguments)
+
+        default:
+            return ToolExecutionResult(
+                toolName: toolCall.name,
+                success: false,
+                result: "Unknown tool: \(toolCall.name)"
+            )
+        }
+    }
+
+    // MARK: - Tool Executors
+
+    /// Execute web search tool
+    private func executeWebSearch(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        guard let query = arguments["query"] as? String else {
+            return ToolExecutionResult(toolName: "web_search", success: false, result: "Missing required 'query' parameter")
+        }
+
+        let maxResults = arguments["max_results"] as? Int ?? 5
+
+        do {
+            let results = await MainActor.run {
+                Task {
+                    try await WebSearchService.shared.search(query, maxResults: maxResults)
+                }
+            }
+
+            let searchResults = try await results.value
+
+            // Format results as JSON for the model
+            var formattedResults: [[String: String]] = []
+            for result in searchResults {
+                formattedResults.append([
+                    "title": result.title,
+                    "url": result.url,
+                    "snippet": result.snippet
+                ])
+            }
+
+            let resultJSON = try JSONSerialization.data(withJSONObject: formattedResults, options: .prettyPrinted)
+            let resultString = String(data: resultJSON, encoding: .utf8) ?? "[]"
+
+            return ToolExecutionResult(
+                toolName: "web_search",
+                success: true,
+                result: "Search results for '\(query)':\n\(resultString)"
+            )
+        } catch {
+            return ToolExecutionResult(
+                toolName: "web_search",
+                success: false,
+                result: "Search failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Execute code execution tool
+    private func executeCode(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        guard let languageStr = arguments["language"] as? String,
+              let code = arguments["code"] as? String else {
+            return ToolExecutionResult(toolName: "execute_code", success: false, result: "Missing required 'language' or 'code' parameter")
+        }
+
+        guard let language = CodeLanguage(rawValue: languageStr) else {
+            return ToolExecutionResult(toolName: "execute_code", success: false, result: "Unsupported language: \(languageStr)")
+        }
+
+        let timeout = arguments["timeout"] as? Double ?? 30.0
+        let capabilitiesStrs = arguments["capabilities"] as? [String] ?? []
+        let capabilities = capabilitiesStrs.compactMap { ExecutionCapability(rawValue: $0) }
+
+        do {
+            let result = await MainActor.run {
+                Task {
+                    try await ExecutionBroker.shared.requestExecution(
+                        conversationId: UUID(),
+                        language: language,
+                        code: code,
+                        requestedCapabilities: capabilities,
+                        timeout: timeout
+                    )
+                }
+            }
+
+            let executionResult = try await result.value
+
+            var output = ""
+            if !executionResult.stdout.isEmpty {
+                output += "Output:\n\(executionResult.stdout)"
+            }
+            if !executionResult.stderr.isEmpty {
+                output += "\nErrors:\n\(executionResult.stderr)"
+            }
+            output += "\nExit code: \(executionResult.exitCode)"
+
+            return ToolExecutionResult(
+                toolName: "execute_code",
+                success: executionResult.exitCode == 0,
+                result: output.isEmpty ? "Code executed successfully (no output)" : output
+            )
+        } catch {
+            return ToolExecutionResult(
+                toolName: "execute_code",
+                success: false,
+                result: "Execution failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Execute shell command tool
+    private func executeShell(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        guard let shellTypeStr = arguments["shell_type"] as? String,
+              let code = arguments["code"] as? String else {
+            return ToolExecutionResult(toolName: "execute_shell", success: false, result: "Missing required 'shell_type' or 'code' parameter")
+        }
+
+        let language: CodeLanguage
+        switch shellTypeStr {
+        case "bash": language = .bash
+        case "zsh": language = .zsh
+        case "pwsh": language = .powershell
+        default:
+            return ToolExecutionResult(toolName: "execute_shell", success: false, result: "Unsupported shell type: \(shellTypeStr)")
+        }
+
+        let timeout = min(arguments["timeout"] as? Double ?? 30.0, 60.0)
+
+        do {
+            let result = await MainActor.run {
+                Task {
+                    try await ExecutionBroker.shared.requestExecution(
+                        conversationId: UUID(),
+                        language: language,
+                        code: code,
+                        requestedCapabilities: [.shellExecution],
+                        timeout: timeout
+                    )
+                }
+            }
+
+            let executionResult = try await result.value
+
+            var output = ""
+            if !executionResult.stdout.isEmpty {
+                output += executionResult.stdout
+            }
+            if !executionResult.stderr.isEmpty {
+                output += "\nStderr:\n\(executionResult.stderr)"
+            }
+            output += "\nExit code: \(executionResult.exitCode)"
+
+            return ToolExecutionResult(
+                toolName: "execute_shell",
+                success: executionResult.exitCode == 0,
+                result: output.isEmpty ? "Command executed successfully (no output)" : output
+            )
+        } catch {
+            return ToolExecutionResult(
+                toolName: "execute_shell",
+                success: false,
+                result: "Shell execution failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Create artifact tool
+    private func createArtifact(
+        _ arguments: [String: Any],
+        onArtifactCreated: (@Sendable (Artifact) -> Void)?
+    ) async -> ToolExecutionResult {
+        guard let typeStr = arguments["type"] as? String,
+              let title = arguments["title"] as? String,
+              let content = arguments["content"] as? String else {
+            return ToolExecutionResult(toolName: "create_artifact", success: false, result: "Missing required 'type', 'title', or 'content' parameter")
+        }
+
+        let artifactType: ArtifactType
+        let language: String
+        switch typeStr.lowercased() {
+        case "react":
+            artifactType = .react
+            language = "jsx"
+        case "html":
+            artifactType = .html
+            language = "html"
+        case "svg":
+            artifactType = .svg
+            language = "svg"
+        case "mermaid":
+            artifactType = .mermaid
+            language = "mermaid"
+        default:
+            return ToolExecutionResult(toolName: "create_artifact", success: false, result: "Unsupported artifact type: \(typeStr)")
+        }
+
+        let artifact = Artifact(
+            id: UUID(),
+            type: artifactType,
+            title: title,
+            content: content,
+            language: language,
+            createdAt: Date()
+        )
+
+        // Notify about artifact creation
+        if let callback = onArtifactCreated {
+            callback(artifact)
+        }
+
+        return ToolExecutionResult(
+            toolName: "create_artifact",
+            success: true,
+            result: "Created \(typeStr) artifact: '\(title)'. The artifact is now displayed in the artifact panel.",
+            artifact: artifact
+        )
+    }
+
+    /// Execute browser action tool
+    private func executeBrowserAction(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        guard let action = arguments["action"] as? String else {
+            return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing required 'action' parameter")
+        }
+
+        switch action {
+        case "navigate":
+            guard let url = arguments["url"] as? String else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing 'url' for navigate action")
+            }
+            await MainActor.run {
+                Task {
+                    await BrowserService.shared.navigate(to: url)
+                }
+            }
+            return ToolExecutionResult(toolName: "browser_action", success: true, result: "Navigated to: \(url)")
+
+        case "extract":
+            let content = await MainActor.run {
+                Task {
+                    await BrowserService.shared.extractPageContent()
+                }
+            }
+            if let pageContent = await content.value {
+                let summary = """
+                Title: \(pageContent.title)
+                URL: \(pageContent.url.absoluteString)
+
+                Content (truncated to 2000 chars):
+                \(String(pageContent.text.prefix(2000)))
+
+                Links found: \(pageContent.links.count)
+                Images found: \(pageContent.images.count)
+                Forms found: \(pageContent.forms.count)
+                """
+                return ToolExecutionResult(toolName: "browser_action", success: true, result: summary)
+            } else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Failed to extract page content")
+            }
+
+        case "click":
+            guard let selector = arguments["selector"] as? String else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing 'selector' for click action")
+            }
+            let elements = await MainActor.run {
+                Task {
+                    await BrowserService.shared.findElements(matching: selector)
+                }
+            }
+            let foundElements = await elements.value
+            if let element = foundElements.first {
+                let success = await MainActor.run {
+                    Task {
+                        await BrowserService.shared.click(element: element, requireConfirmation: false)
+                    }
+                }
+                let clicked = await success.value
+                return ToolExecutionResult(toolName: "browser_action", success: clicked, result: clicked ? "Clicked element: \(selector)" : "Failed to click element")
+            } else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Element not found: \(selector)")
+            }
+
+        case "type":
+            guard let selector = arguments["selector"] as? String,
+                  let text = arguments["text"] as? String else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing 'selector' or 'text' for type action")
+            }
+            let elements = await MainActor.run {
+                Task {
+                    await BrowserService.shared.findElements(matching: selector)
+                }
+            }
+            let foundElements = await elements.value
+            if let element = foundElements.first {
+                let success = await MainActor.run {
+                    Task {
+                        await BrowserService.shared.type(text: text, into: element, requireConfirmation: false)
+                    }
+                }
+                let typed = await success.value
+                return ToolExecutionResult(toolName: "browser_action", success: typed, result: typed ? "Typed into element: \(selector)" : "Failed to type into element")
+            } else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Element not found: \(selector)")
+            }
+
+        case "screenshot":
+            let image = await MainActor.run {
+                Task {
+                    await BrowserService.shared.takeScreenshot()
+                }
+            }
+            if await image.value != nil {
+                return ToolExecutionResult(toolName: "browser_action", success: true, result: "Screenshot captured successfully")
+            } else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Failed to capture screenshot")
+            }
+
+        case "find":
+            guard let selector = arguments["selector"] as? String else {
+                return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing 'selector' for find action")
+            }
+            let elements = await MainActor.run {
+                Task {
+                    await BrowserService.shared.findElements(matching: selector)
+                }
+            }
+            let foundElements = await elements.value
+            var result = "Found \(foundElements.count) element(s):\n"
+            for (index, element) in foundElements.prefix(10).enumerated() {
+                result += "\(index + 1). \(element.tagName): \(element.text ?? element.selector)\n"
+            }
+            return ToolExecutionResult(toolName: "browser_action", success: true, result: result)
+
+        case "scroll":
+            let position = arguments["scroll_position"] as? String ?? "top"
+            let scrollPos: ScrollPosition
+            switch position {
+            case "bottom": scrollPos = .bottom
+            case "element":
+                if let selector = arguments["selector"] as? String {
+                    scrollPos = .element(selector: selector)
+                } else {
+                    scrollPos = .top
+                }
+            default: scrollPos = .top
+            }
+            await MainActor.run {
+                Task {
+                    await BrowserService.shared.scroll(to: scrollPos)
+                }
+            }
+            return ToolExecutionResult(toolName: "browser_action", success: true, result: "Scrolled to: \(position)")
+
+        default:
+            return ToolExecutionResult(toolName: "browser_action", success: false, result: "Unknown browser action: \(action)")
         }
     }
 }
