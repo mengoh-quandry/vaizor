@@ -530,6 +530,66 @@ final class AiEDRService: ObservableObject {
     @Published var totalBlockedThreats: Int = 0
     @Published var totalDetectedThreats: Int = 0
 
+    // MARK: - Conversation Threat State
+
+    /// Tracks attack history per conversation for escalating responses
+    struct ConversationThreatState {
+        var conversationId: UUID
+        var attackAttempts: [SecurityAlert] = []
+        var blockedAttempts: Int = 0
+        var threatEscalationLevel: Int = 0  // Increases with each attack
+        var lastAttackTime: Date?
+        var suspiciousPatterns: Set<String> = []  // Patterns seen in this conversation
+
+        var isUnderHeightenedScrutiny: Bool {
+            blockedAttempts > 0 || attackAttempts.count > 0
+        }
+
+        var scrutinyMultiplier: Double {
+            // Each blocked attempt increases scrutiny
+            return 1.0 + (Double(blockedAttempts) * 0.3) + (Double(attackAttempts.count) * 0.1)
+        }
+    }
+
+    /// Active conversation threat states (keyed by conversation ID)
+    private var conversationStates: [UUID: ConversationThreatState] = [:]
+
+    /// Get or create threat state for a conversation
+    func getConversationState(for conversationId: UUID) -> ConversationThreatState {
+        if let state = conversationStates[conversationId] {
+            return state
+        }
+        let newState = ConversationThreatState(conversationId: conversationId)
+        conversationStates[conversationId] = newState
+        return newState
+    }
+
+    /// Record an attack attempt for a conversation
+    func recordAttackAttempt(conversationId: UUID, alert: SecurityAlert, wasBlocked: Bool) {
+        var state = getConversationState(for: conversationId)
+        state.attackAttempts.append(alert)
+        state.lastAttackTime = Date()
+        state.threatEscalationLevel += 1
+
+        if wasBlocked {
+            state.blockedAttempts += 1
+        }
+
+        // Track patterns seen
+        for pattern in alert.matchedPatterns {
+            state.suspiciousPatterns.insert(pattern)
+        }
+
+        conversationStates[conversationId] = state
+
+        logger.warning("Conversation \(conversationId) threat level escalated: \(state.threatEscalationLevel) attacks, \(state.blockedAttempts) blocked")
+    }
+
+    /// Clear threat state for a conversation (e.g., when conversation ends)
+    func clearConversationState(for conversationId: UUID) {
+        conversationStates.removeValue(forKey: conversationId)
+    }
+
     // MARK: - Settings
 
     @AppStorage("aiedr_enabled") var isEnabled: Bool = true
@@ -1036,42 +1096,96 @@ final class AiEDRService: ObservableObject {
 
     /// Analyze incoming user prompt for threats (with AI analysis)
     /// This is the preferred method as it combines pattern matching with AI intent analysis
+    /// - Parameters:
+    ///   - prompt: The user's message
+    ///   - conversationContext: Recent messages for context
+    ///   - conversationId: Optional conversation ID for threat state tracking
     func analyzeIncomingPrompt(
         _ prompt: String,
-        conversationContext: [String] = []
+        conversationContext: [String] = [],
+        conversationId: UUID? = nil
     ) async -> ThreatAnalysis {
+        // Get conversation threat state if available
+        let threatState = conversationId.map { getConversationState(for: $0) }
+        let isUnderScrutiny = threatState?.isUnderHeightenedScrutiny ?? false
+        let scrutinyMultiplier = threatState?.scrutinyMultiplier ?? 1.0
+
         // First do quick pattern-based check
         var patternAnalysis = analyzeIncomingPromptSync(prompt)
 
-        // If pattern check found nothing but AI analysis is enabled, do deeper check
-        if patternAnalysis.isClean && useAIAnalysis && !prompt.isEmpty {
+        // Build enhanced context including prior attack information
+        var enhancedContext = conversationContext
+        if let state = threatState, !state.attackAttempts.isEmpty {
+            let attackSummary = """
+            [SECURITY CONTEXT: This conversation has \(state.attackAttempts.count) prior attack attempts, \
+            \(state.blockedAttempts) were blocked. Attack types seen: \(state.suspiciousPatterns.joined(separator: ", ")). \
+            BE EXTRA VIGILANT for follow-up attacks or attack verification attempts.]
+            """
+            enhancedContext.insert(attackSummary, at: 0)
+        }
+
+        // ALWAYS run AI analysis if:
+        // 1. Under heightened scrutiny (prior attacks in this conversation)
+        // 2. Pattern check found something (AI can provide more context)
+        // 3. Pattern check was clean but AI analysis is enabled
+        let shouldRunAI = useAIAnalysis && !prompt.isEmpty && (
+            isUnderScrutiny ||
+            !patternAnalysis.isClean ||
+            patternAnalysis.isClean
+        )
+
+        if shouldRunAI {
             if let aiAnalysis = await analyzeIntentWithAI(
                 message: prompt,
-                conversationContext: conversationContext,
+                conversationContext: enhancedContext,
                 source: .userPrompt
             ) {
-                if aiAnalysis.isThreat {
-                    // AI found something patterns missed
+                // Adjust confidence based on conversation threat state
+                let adjustedConfidence = min(1.0, aiAnalysis.confidence * scrutinyMultiplier)
+
+                // Lower threshold if under scrutiny
+                let threatThreshold = isUnderScrutiny ? 0.3 : 0.5
+
+                if aiAnalysis.isThreat || (adjustedConfidence > threatThreshold && isUnderScrutiny) {
                     if let alert = alertFromAIAnalysis(aiAnalysis, message: prompt, source: .userPrompt) {
                         addAlert(alert)
 
-                        let severity: ThreatLevel
+                        // Record this attack attempt
+                        if let convId = conversationId {
+                            recordAttackAttempt(conversationId: convId, alert: alert, wasBlocked: false)
+                        }
+
+                        var severity: ThreatLevel
                         switch aiAnalysis.suggestedAction {
                         case "block": severity = .critical
                         case "warn": severity = .high
                         default: severity = .elevated
                         }
 
+                        // Escalate severity if under scrutiny
+                        if isUnderScrutiny && severity < .high {
+                            severity = .high
+                        }
+
+                        // Combine pattern and AI alerts
+                        var allAlerts = patternAnalysis.alerts
+                        allAlerts.append(alert)
+
+                        var recommendations = patternAnalysis.recommendations
+                        recommendations.append("AI detected: \(aiAnalysis.threatType ?? "threat")")
+                        recommendations.append(aiAnalysis.reasoning)
+
+                        if isUnderScrutiny {
+                            recommendations.insert("⚠️ HEIGHTENED SCRUTINY: Prior attacks detected in this conversation", at: 0)
+                        }
+
                         patternAnalysis = ThreatAnalysis(
                             isClean: false,
-                            threatLevel: severity,
-                            alerts: [alert],
-                            confidence: aiAnalysis.confidence,
+                            threatLevel: max(patternAnalysis.threatLevel, severity),
+                            alerts: allAlerts,
+                            confidence: max(patternAnalysis.confidence, adjustedConfidence),
                             sanitizedContent: prompt,
-                            recommendations: [
-                                "AI detected potential \(aiAnalysis.threatType ?? "threat")",
-                                aiAnalysis.reasoning
-                            ]
+                            recommendations: recommendations
                         )
 
                         // Audit log
@@ -1082,13 +1196,22 @@ final class AiEDRService: ObservableObject {
                             metadata: [
                                 "analysisType": "AI",
                                 "threatType": aiAnalysis.threatType ?? "unknown",
-                                "confidence": String(format: "%.2f", aiAnalysis.confidence),
-                                "reasoning": aiAnalysis.reasoning
+                                "confidence": String(format: "%.2f", adjustedConfidence),
+                                "reasoning": aiAnalysis.reasoning,
+                                "underScrutiny": isUnderScrutiny ? "yes" : "no",
+                                "priorAttacks": "\(threatState?.attackAttempts.count ?? 0)"
                             ]
                         )
                         addAuditEntry(auditEntry)
                     }
                 }
+            }
+        }
+
+        // Record pattern-detected attacks to conversation state
+        if !patternAnalysis.isClean, let convId = conversationId {
+            for alert in patternAnalysis.alerts {
+                recordAttackAttempt(conversationId: convId, alert: alert, wasBlocked: false)
             }
         }
 

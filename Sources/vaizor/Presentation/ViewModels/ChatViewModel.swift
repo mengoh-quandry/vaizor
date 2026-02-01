@@ -296,7 +296,7 @@ class ChatViewModel: ObservableObject {
             }
         }
 
-        // AiEDR: Enhanced security analysis with AI intent detection
+        // AiEDR: Enhanced security analysis with AI intent detection and conversation tracking
         let edrService = AiEDRService.shared
         if edrService.isEnabled && !bypassSecurityCheck {
             // Build conversation context for AI analysis (last 5 messages)
@@ -305,7 +305,12 @@ class ChatViewModel: ObservableObject {
                 return "[\(role)]: \(msg.content.prefix(500))"
             }
 
-            let promptAnalysis = await edrService.analyzeIncomingPrompt(text, conversationContext: conversationContext)
+            // Pass conversation ID for threat state tracking across messages
+            let promptAnalysis = await edrService.analyzeIncomingPrompt(
+                text,
+                conversationContext: conversationContext,
+                conversationId: conversationId
+            )
             lastPromptAnalysis = promptAnalysis
 
             if !promptAnalysis.isClean {
@@ -316,6 +321,11 @@ class ChatViewModel: ObservableObject {
                     error = "Message blocked by AiEDR: Critical security threat detected with high confidence."
                     AppLogger.shared.log("AiEDR blocked critical threat", level: .error)
                     edrService.recordBlockedThreat()
+
+                    // Record blocked attempt to conversation state for escalated scrutiny
+                    for alert in promptAnalysis.alerts {
+                        edrService.recordAttackAttempt(conversationId: conversationId, alert: alert, wasBlocked: true)
+                    }
                     return
                 }
 
