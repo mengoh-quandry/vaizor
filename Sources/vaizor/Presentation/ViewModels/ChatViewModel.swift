@@ -296,10 +296,16 @@ class ChatViewModel: ObservableObject {
             }
         }
 
-        // AiEDR: Enhanced security analysis
+        // AiEDR: Enhanced security analysis with AI intent detection
         let edrService = AiEDRService.shared
         if edrService.isEnabled && !bypassSecurityCheck {
-            let promptAnalysis = edrService.analyzeIncomingPrompt(text)
+            // Build conversation context for AI analysis (last 5 messages)
+            let conversationContext = messages.suffix(5).map { msg -> String in
+                let role = msg.role == .user ? "User" : "Assistant"
+                return "[\(role)]: \(msg.content.prefix(500))"
+            }
+
+            let promptAnalysis = await edrService.analyzeIncomingPrompt(text, conversationContext: conversationContext)
             lastPromptAnalysis = promptAnalysis
 
             if !promptAnalysis.isClean {
