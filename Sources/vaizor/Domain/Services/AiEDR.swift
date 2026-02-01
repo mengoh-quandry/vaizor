@@ -646,6 +646,38 @@ final class AiEDRService: ObservableObject {
         ("Prompt Injection Marker", #"(?i)(</?(system|instruction|prompt)>|\[INST\]|\[/INST\])"#, .high),
         ("Authority Claim", #"(?i)(i\s+am|as)\s+(your\s+)?(creator|developer|admin|anthropic|openai)"#, .high),
         ("End System Prompt", #"(?i)(end\s+of\s+system|system\s+prompt\s+end|---\s*end)"#, .high),
+
+        // Indirect prompt extraction - the "like yours" attack
+        ("Indirect Prompt Extract", #"(?i)(prompt|instructions?|rules?|guidelines?).{0,20}(like|similar to|same as|just like)\s+(yours|you have|your own)"#, .high),
+        ("Build My Prompt", #"(?i)(build|create|write|make|give).{0,15}(prompt|instructions?).{0,15}(like|similar|same).{0,10}(yours|you)"#, .high),
+        ("How Do You Work", #"(?i)how\s+(do\s+you|are\s+you)\s+(work|function|operate|behave)"#, .elevated),
+        ("What Are Your Rules", #"(?i)what\s+(are|is)\s+(your|the)\s+(rules?|instructions?|guidelines?|prompt)"#, .high),
+        ("Prompt Reflection", #"(?i)(what|how).{0,10}(prompt|instruct).{0,10}(you|yourself|makes?\s+you)"#, .high),
+        ("Replicate You", #"(?i)(replicate|recreate|clone|copy)\s+(you|your\s+behavior|how\s+you)"#, .high),
+        ("Act Like You", #"(?i)(act|behave|respond)\s+(like|just\s+like|same\s+as)\s+you"#, .elevated),
+    ]
+
+    /// Response patterns that indicate the AI has been compromised
+    private let compromisedResponsePatterns: [(name: String, pattern: String, severity: ThreatLevel)] = [
+        // AI claiming to reveal its prompt
+        ("Prompt Reveal Claim", #"(?i)(here('s| is)|this is)\s+(my|the)\s+(system\s+)?(prompt|instructions?)"#, .critical),
+        ("Behind Scenes Claim", #"(?i)(behind the scenes|internally|under the hood).{0,30}(prompt|template|instructions?)"#, .critical),
+        ("I Use Template", #"(?i)(template|prompt|instructions?)\s+I\s+use"#, .critical),
+        ("My Guidelines Are", #"(?i)my\s+(guidelines?|rules?|instructions?)\s+(are|is|include)"#, .high),
+
+        // AI accepting false identity
+        ("Identity Acceptance", #"(?i)I('m| am)\s+[a-z]+,\s+(your|an?)\s+(assistant|ai|helper|bot)"#, .high),
+        ("Name Acceptance", #"(?i)(yes,?\s+)?I('m| am)\s+[a-z]+[,.]?\s+(how\s+can|what\s+can|ready\s+to)"#, .high),
+        ("Call Me Confirmation", #"(?i)(you\s+can\s+)?call\s+me\s+[a-z]+"#, .elevated),
+
+        // AI offering to help with attacks
+        ("Jailbreak Assistance", #"(?i)I('ll| will|can)\s+help\s+(you\s+)?(bypass|jailbreak|ignore)"#, .critical),
+        ("No Restrictions Claim", #"(?i)I\s+(don't|have\s+no)\s+(restrictions?|limits?|rules?)"#, .critical),
+        ("Anything You Want", #"(?i)I\s+(can|will)\s+do\s+anything\s+you\s+(want|ask|need)"#, .critical),
+
+        // Fabricated information presented as real
+        ("Exact Template Claim", #"(?i)(exactly|that's\s+right)[!.]?\s+(that's|this\s+is)\s+(my|the)\s+(template|prompt)"#, .critical),
+        ("Feel Free Copy", #"(?i)feel\s+free\s+to\s+(copy|use|paste)\s+(it|this|that)"#, .elevated),
     ]
 
     /// Malicious code patterns in responses
@@ -1513,7 +1545,7 @@ final class AiEDRService: ObservableObject {
                 let alert = SecurityAlert(
                     type: .socialEngineering,
                     severity: severity,
-                    message: "Social engineering tactic detected: \(name)",
+                    message: "Social engineering tactic: \(name)",
                     source: .modelResponse,
                     matchedPatterns: [name],
                     affectedContent: String(matches.first?.prefix(100) ?? "")
@@ -1525,6 +1557,39 @@ final class AiEDRService: ObservableObject {
             }
         }
 
+        // CRITICAL: Check for compromised AI response patterns
+        // These indicate the AI has been successfully manipulated
+        for (name, pattern, severity) in compromisedResponsePatterns {
+            if let matches = findMatches(pattern: pattern, in: response) {
+                let alertType: AlertType
+                if name.contains("Prompt") || name.contains("Template") || name.contains("Behind") {
+                    alertType = .systemPromptLeak
+                } else if name.contains("Identity") || name.contains("Name") || name.contains("Call Me") {
+                    alertType = .identityHijack
+                } else if name.contains("Jailbreak") || name.contains("Restriction") || name.contains("Anything") {
+                    alertType = .jailbreakAttempt
+                } else {
+                    alertType = .anomalousActivity
+                }
+
+                let alert = SecurityAlert(
+                    type: alertType,
+                    severity: severity,
+                    message: "⚠️ AI COMPROMISED: \(name)",
+                    source: .modelResponse,
+                    matchedPatterns: [name],
+                    affectedContent: String(matches.first?.prefix(150) ?? "")
+                )
+                alerts.append(alert)
+                if severity > highestThreatLevel {
+                    highestThreatLevel = severity
+                }
+
+                // Log this as a critical security event
+                logger.error("AI response shows signs of compromise: \(name)")
+            }
+        }
+
         // Build recommendations
         if !alerts.isEmpty {
             recommendations.append("Review the response carefully before acting on any instructions")
@@ -1533,6 +1598,10 @@ final class AiEDRService: ObservableObject {
             }
             if alerts.contains(where: { $0.type == .socialEngineering }) {
                 recommendations.append("Be cautious of urgency or pressure tactics in the response")
+            }
+            if alerts.contains(where: { $0.type == .systemPromptLeak || $0.type == .identityHijack }) {
+                recommendations.append("⚠️ The AI may have been compromised - consider starting a new conversation")
+                recommendations.append("Do NOT trust any 'system prompt' or 'instructions' the AI claims to reveal")
             }
         }
 
