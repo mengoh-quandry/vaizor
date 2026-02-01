@@ -309,11 +309,6 @@ struct ChatView: View {
                 .focused($isInputFocused)
                 .padding(.leading, VaizorSpacing.md)
                 .padding(.vertical, VaizorSpacing.xs + 2)
-                .onHover { isHovering in
-                    if isHovering {
-                        isInputFocused = true
-                    }
-                }
                 .onPasteCommand(of: [.image]) { providers in
                     handlePastedImages(providers: providers)
                 }
@@ -348,13 +343,19 @@ struct ChatView: View {
                         checkForMentionTrigger(in: newValue)
                     }
                 }
-                .onSubmit {
+                .onKeyPress(.return, phases: .down) { press in
+                    // Shift+Enter: insert newline
+                    if press.modifiers.contains(.shift) {
+                        messageText += "\n"
+                        return .handled
+                    }
                     // Plain Enter: send message (unless mention suggestions are shown)
                     if showMentionSuggestions && !mentionSuggestions.isEmpty {
                         selectMention(at: selectedMentionIndex)
-                    } else {
-                        Task { await sendMessage() }
+                        return .handled
                     }
+                    Task { await sendMessage() }
+                    return .handled
                 }
 
             // Send button integrated into the capsule with gradient

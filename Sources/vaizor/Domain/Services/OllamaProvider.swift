@@ -177,7 +177,12 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
             "content": finalText
         ])
 
-        let body: [String: Any] = [
+        // Get enabled tools from BuiltInToolsManager
+        let toolSchemas = await MainActor.run {
+            BuiltInToolsManager.shared.getToolSchemasOpenAI()
+        }
+
+        var body: [String: Any] = [
             "model": configuration.model,
             "messages": messages,
             "stream": true,
@@ -186,6 +191,11 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
                 "num_predict": configuration.maxTokens
             ]
         ]
+
+        // Include tools if any are enabled (Ollama supports OpenAI-style tool format)
+        if !toolSchemas.isEmpty {
+            body["tools"] = toolSchemas
+        }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
