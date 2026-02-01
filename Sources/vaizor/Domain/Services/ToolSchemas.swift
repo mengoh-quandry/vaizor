@@ -4,6 +4,124 @@ import Foundation
 /// All tool schemas should be defined here and referenced elsewhere
 enum ToolSchemas {
 
+    // MARK: - Internal Helper Tools (Not shown to users)
+
+    /// Get current date and time in user's timezone
+    static let getCurrentTime = ToolSchema(
+        name: "get_current_time",
+        displayName: "Get Current Time",
+        description: "Get the current date, time, and timezone. Use this to provide time-aware responses, schedule-related help, or when the user asks about the current time/date.",
+        icon: "clock",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "format": [
+                    "type": "string",
+                    "enum": ["full", "date_only", "time_only", "iso8601", "unix"],
+                    "description": "Output format. 'full' includes date, time, timezone. 'iso8601' for standard format. 'unix' for timestamp."
+                ]
+            ],
+            "required": []
+        ],
+        isInternal: true
+    )
+
+    /// Get user's approximate location
+    static let getLocation = ToolSchema(
+        name: "get_location",
+        displayName: "Get Location",
+        description: "Get the user's approximate location (city, region, country, timezone) based on system settings. Use for location-aware responses, weather queries, or local recommendations. Does NOT use GPS - only system locale/timezone.",
+        icon: "location",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [:],
+            "required": []
+        ],
+        isInternal: true
+    )
+
+    /// Get system information
+    static let getSystemInfo = ToolSchema(
+        name: "get_system_info",
+        displayName: "Get System Info",
+        description: "Get basic system information: OS version, device type, language, available disk space, memory. Use to provide platform-specific advice or troubleshoot issues.",
+        icon: "desktopcomputer",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [:],
+            "required": []
+        ],
+        isInternal: true
+    )
+
+    /// Read clipboard contents
+    static let getClipboard = ToolSchema(
+        name: "get_clipboard",
+        displayName: "Get Clipboard",
+        description: "Read the current clipboard contents (text only). Use when the user says 'from my clipboard', 'what I copied', or asks to work with clipboard content.",
+        icon: "doc.on.clipboard",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [:],
+            "required": []
+        ],
+        isInternal: true
+    )
+
+    /// Set clipboard contents
+    static let setClipboard = ToolSchema(
+        name: "set_clipboard",
+        displayName: "Set Clipboard",
+        description: "Copy text to the clipboard. Use when the user asks to 'copy this', 'put in clipboard', or after generating content they might want to paste elsewhere.",
+        icon: "doc.on.clipboard.fill",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "text": [
+                    "type": "string",
+                    "description": "Text to copy to clipboard"
+                ]
+            ],
+            "required": ["text"]
+        ],
+        isInternal: true
+    )
+
+    /// Get current weather
+    static let getWeather = ToolSchema(
+        name: "get_weather",
+        displayName: "Get Weather",
+        description: "Get current weather conditions for a location. If no location specified, uses user's approximate location. Returns temperature, conditions, humidity, wind.",
+        icon: "cloud.sun",
+        category: .core,
+        inputSchema: [
+            "type": "object",
+            "properties": [
+                "location": [
+                    "type": "string",
+                    "description": "City name or 'auto' to use user's location. Examples: 'San Francisco', 'London, UK', 'auto'"
+                ]
+            ],
+            "required": []
+        ],
+        isInternal: true
+    )
+
+    /// All internal helper tools
+    static let allInternal: [ToolSchema] = [
+        getCurrentTime,
+        getLocation,
+        getSystemInfo,
+        getClipboard,
+        setClipboard,
+        getWeather
+    ]
+
     // MARK: - Web Search Tool
 
     static let webSearch = ToolSchema(
@@ -176,6 +294,7 @@ enum ToolSchemas {
 
     // MARK: - All Built-in Tools
 
+    /// User-visible tools (shown in UI toggles)
     static let allBuiltIn: [ToolSchema] = [
         webSearch,
         executeCode,
@@ -184,18 +303,30 @@ enum ToolSchemas {
         browserAutomation
     ]
 
+    /// All tools including internal helpers
+    static let allTools: [ToolSchema] = allBuiltIn + allInternal
+
     // MARK: - Schema Retrieval
 
-    /// Get tool schema by name
+    /// Get tool schema by name (searches all tools including internal)
     static func schema(for name: String) -> ToolSchema? {
-        allBuiltIn.first { $0.name == name }
+        allTools.first { $0.name == name }
     }
 
-    /// Get all enabled built-in tools
+    /// Get all enabled built-in tools (user-visible only)
     @MainActor
     static func enabledSchemas() -> [ToolSchema] {
         let manager = BuiltInToolsManager.shared
         return allBuiltIn.filter { manager.isToolEnabled($0.name) }
+    }
+
+    /// Get all enabled tools including internal helpers (for API calls)
+    @MainActor
+    static func allEnabledSchemas() -> [ToolSchema] {
+        let manager = BuiltInToolsManager.shared
+        let enabledUserTools = allBuiltIn.filter { manager.isToolEnabled($0.name) }
+        // Internal tools are always enabled
+        return enabledUserTools + allInternal
     }
 
     /// Get tool schemas as OpenAI/Ollama format
@@ -243,8 +374,27 @@ struct ToolSchema: Identifiable, Sendable {
     let icon: String
     let category: ToolCategory
     let inputSchema: [String: Any]
+    let isInternal: Bool
 
     var id: String { name }
+
+    init(
+        name: String,
+        displayName: String,
+        description: String,
+        icon: String,
+        category: ToolCategory,
+        inputSchema: [String: Any],
+        isInternal: Bool = false
+    ) {
+        self.name = name
+        self.displayName = displayName
+        self.description = description
+        self.icon = icon
+        self.category = category
+        self.inputSchema = inputSchema
+        self.isInternal = isInternal
+    }
 
     /// Tool categories
     enum ToolCategory: String, CaseIterable, Sendable {

@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 /// Represents a parsed tool call from Ollama's response
 struct OllamaToolCall: Sendable {
@@ -381,6 +384,7 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         onArtifactCreated: (@Sendable (Artifact) -> Void)?
     ) async -> ToolExecutionResult {
         switch toolCall.name {
+        // User-visible tools
         case "web_search":
             return await executeWebSearch(toolCall.arguments)
 
@@ -395,6 +399,25 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
 
         case "browser_action":
             return await executeBrowserAction(toolCall.arguments)
+
+        // Internal helper tools
+        case "get_current_time":
+            return executeGetCurrentTime(toolCall.arguments)
+
+        case "get_location":
+            return await executeGetLocation()
+
+        case "get_system_info":
+            return await executeGetSystemInfo()
+
+        case "get_clipboard":
+            return await executeGetClipboard()
+
+        case "set_clipboard":
+            return await executeSetClipboard(toolCall.arguments)
+
+        case "get_weather":
+            return await executeGetWeather(toolCall.arguments)
 
         default:
             return ToolExecutionResult(
@@ -748,6 +771,286 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
 
         default:
             return ToolExecutionResult(toolName: "browser_action", success: false, result: "Unknown browser action: \(action)")
+        }
+    }
+
+    // MARK: - Internal Helper Tool Executors
+
+    /// Get current date and time
+    private func executeGetCurrentTime(_ arguments: [String: Any]) -> ToolExecutionResult {
+        let format = arguments["format"] as? String ?? "full"
+        let now = Date()
+        let calendar = Calendar.current
+        let timezone = TimeZone.current
+
+        let result: String
+        switch format {
+        case "date_only":
+            let formatter = DateFormatter()
+            formatter.dateStyle = .full
+            formatter.timeStyle = .none
+            formatter.timeZone = timezone
+            result = formatter.string(from: now)
+
+        case "time_only":
+            let formatter = DateFormatter()
+            formatter.dateStyle = .none
+            formatter.timeStyle = .medium
+            formatter.timeZone = timezone
+            result = "\(formatter.string(from: now)) (\(timezone.identifier))"
+
+        case "iso8601":
+            let formatter = ISO8601DateFormatter()
+            formatter.timeZone = timezone
+            result = formatter.string(from: now)
+
+        case "unix":
+            result = String(Int(now.timeIntervalSince1970))
+
+        default: // "full"
+            let formatter = DateFormatter()
+            formatter.dateStyle = .full
+            formatter.timeStyle = .medium
+            formatter.timeZone = timezone
+
+            let weekOfYear = calendar.component(.weekOfYear, from: now)
+
+            // Calculate day of year manually for compatibility
+            let startOfYear = calendar.date(from: calendar.dateComponents([.year], from: now))!
+            let dayOfYear = calendar.dateComponents([.day], from: startOfYear, to: now).day! + 1
+
+            result = """
+            Date and Time: \(formatter.string(from: now))
+            Timezone: \(timezone.identifier) (UTC\(timezone.secondsFromGMT() >= 0 ? "+" : "")\(timezone.secondsFromGMT() / 3600))
+            Week of Year: \(weekOfYear)
+            Day of Year: \(dayOfYear)
+            Is Daylight Saving: \(timezone.isDaylightSavingTime(for: now))
+            """
+        }
+
+        return ToolExecutionResult(toolName: "get_current_time", success: true, result: result)
+    }
+
+    /// Get user's approximate location from system settings
+    private func executeGetLocation() async -> ToolExecutionResult {
+        let timezone = TimeZone.current
+        let locale = Locale.current
+
+        // Get language and region from locale
+        let languageCode = locale.language.languageCode?.identifier ?? "unknown"
+        let regionCode = locale.region?.identifier ?? "unknown"
+
+        // Estimate location from timezone
+        let timezoneCity = timezone.identifier.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? "Unknown"
+        let timezoneRegion = timezone.identifier.components(separatedBy: "/").first ?? "Unknown"
+
+        // Get region name
+        let regionName = locale.localizedString(forRegionCode: regionCode) ?? regionCode
+
+        let result = """
+        Approximate Location (based on system settings):
+        City/Area: \(timezoneCity)
+        Region: \(timezoneRegion)
+        Country: \(regionName) (\(regionCode))
+        Timezone: \(timezone.identifier)
+        UTC Offset: \(timezone.secondsFromGMT() >= 0 ? "+" : "")\(timezone.secondsFromGMT() / 3600) hours
+        Language: \(languageCode)
+
+        Note: This is derived from system timezone and locale settings, not GPS.
+        """
+
+        return ToolExecutionResult(toolName: "get_location", success: true, result: result)
+    }
+
+    /// Get system information
+    private func executeGetSystemInfo() async -> ToolExecutionResult {
+        let processInfo = Foundation.ProcessInfo.processInfo
+        let fileManager = FileManager.default
+
+        // Get OS version
+        let osVersion = processInfo.operatingSystemVersionString
+
+        // Get device/host name
+        let hostName = processInfo.hostName
+
+        // Get memory
+        let physicalMemory = processInfo.physicalMemory
+        let memoryGB = Double(physicalMemory) / 1_073_741_824.0
+
+        // Get processor count
+        let processorCount = processInfo.processorCount
+        let activeProcessorCount = processInfo.activeProcessorCount
+
+        // Get locale info
+        let locale = Locale.current
+        let languageCode = locale.language.languageCode?.identifier ?? "unknown"
+
+        // Get available disk space
+        var diskSpace = "Unknown"
+        if let homeURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+            if let values = try? homeURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+               let capacity = values.volumeAvailableCapacityForImportantUsage {
+                let gbAvailable = Double(capacity) / 1_073_741_824.0
+                diskSpace = String(format: "%.1f GB available", gbAvailable)
+            }
+        }
+
+        // Get app info
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+
+        let result = """
+        System Information:
+        OS: macOS \(osVersion)
+        Host: \(hostName)
+        Memory: \(String(format: "%.1f", memoryGB)) GB
+        Processors: \(activeProcessorCount) active / \(processorCount) total
+        Disk Space: \(diskSpace)
+        Language: \(languageCode)
+        App Version: Vaizor \(appVersion)
+        """
+
+        return ToolExecutionResult(toolName: "get_system_info", success: true, result: result)
+    }
+
+    /// Get clipboard contents
+    private func executeGetClipboard() async -> ToolExecutionResult {
+        return await MainActor.run {
+            #if os(macOS)
+            let pasteboard = NSPasteboard.general
+            if let string = pasteboard.string(forType: .string) {
+                let truncated = string.count > 5000 ? String(string.prefix(5000)) + "\n... [truncated]" : string
+                return ToolExecutionResult(
+                    toolName: "get_clipboard",
+                    success: true,
+                    result: "Clipboard contents:\n\(truncated)"
+                )
+            } else {
+                return ToolExecutionResult(
+                    toolName: "get_clipboard",
+                    success: false,
+                    result: "Clipboard is empty or contains non-text content"
+                )
+            }
+            #else
+            return ToolExecutionResult(
+                toolName: "get_clipboard",
+                success: false,
+                result: "Clipboard access not available on this platform"
+            )
+            #endif
+        }
+    }
+
+    /// Set clipboard contents
+    private func executeSetClipboard(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        guard let text = arguments["text"] as? String else {
+            return ToolExecutionResult(toolName: "set_clipboard", success: false, result: "Missing required 'text' parameter")
+        }
+
+        return await MainActor.run {
+            #if os(macOS)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return ToolExecutionResult(
+                toolName: "set_clipboard",
+                success: true,
+                result: "Copied \(text.count) characters to clipboard"
+            )
+            #else
+            return ToolExecutionResult(
+                toolName: "set_clipboard",
+                success: false,
+                result: "Clipboard access not available on this platform"
+            )
+            #endif
+        }
+    }
+
+    /// Get weather for a location
+    private func executeGetWeather(_ arguments: [String: Any]) async -> ToolExecutionResult {
+        var location = arguments["location"] as? String ?? "auto"
+
+        // If auto, get from timezone
+        if location == "auto" || location.isEmpty {
+            let timezoneCity = TimeZone.current.identifier.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? ""
+            location = timezoneCity
+        }
+
+        guard !location.isEmpty else {
+            return ToolExecutionResult(
+                toolName: "get_weather",
+                success: false,
+                result: "Could not determine location. Please specify a city name."
+            )
+        }
+
+        // Use wttr.in API (free, no API key required)
+        let encodedLocation = location.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? location
+        guard let url = URL(string: "https://wttr.in/\(encodedLocation)?format=j1") else {
+            return ToolExecutionResult(toolName: "get_weather", success: false, result: "Invalid location")
+        }
+
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Vaizor/1.0", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 10
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return ToolExecutionResult(
+                    toolName: "get_weather",
+                    success: false,
+                    result: "Weather service unavailable for location: \(location)"
+                )
+            }
+
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let currentCondition = (json["current_condition"] as? [[String: Any]])?.first,
+                  let nearestArea = (json["nearest_area"] as? [[String: Any]])?.first else {
+                return ToolExecutionResult(
+                    toolName: "get_weather",
+                    success: false,
+                    result: "Could not parse weather data for: \(location)"
+                )
+            }
+
+            // Extract weather data
+            let tempC = currentCondition["temp_C"] as? String ?? "?"
+            let tempF = currentCondition["temp_F"] as? String ?? "?"
+            let feelsLikeC = currentCondition["FeelsLikeC"] as? String ?? "?"
+            let humidity = currentCondition["humidity"] as? String ?? "?"
+            let weatherDesc = (currentCondition["weatherDesc"] as? [[String: Any]])?.first?["value"] as? String ?? "Unknown"
+            let windSpeedKmph = currentCondition["windspeedKmph"] as? String ?? "?"
+            let windDir = currentCondition["winddir16Point"] as? String ?? "?"
+            let visibility = currentCondition["visibility"] as? String ?? "?"
+            let uvIndex = currentCondition["uvIndex"] as? String ?? "?"
+
+            let areaName = (nearestArea["areaName"] as? [[String: Any]])?.first?["value"] as? String ?? location
+            let country = (nearestArea["country"] as? [[String: Any]])?.first?["value"] as? String ?? ""
+
+            let result = """
+            Weather for \(areaName), \(country):
+
+            Conditions: \(weatherDesc)
+            Temperature: \(tempC)°C / \(tempF)°F
+            Feels Like: \(feelsLikeC)°C
+            Humidity: \(humidity)%
+            Wind: \(windSpeedKmph) km/h from \(windDir)
+            Visibility: \(visibility) km
+            UV Index: \(uvIndex)
+            """
+
+            return ToolExecutionResult(toolName: "get_weather", success: true, result: result)
+
+        } catch {
+            return ToolExecutionResult(
+                toolName: "get_weather",
+                success: false,
+                result: "Failed to fetch weather: \(error.localizedDescription)"
+            )
         }
     }
 }

@@ -245,19 +245,25 @@ class BuiltInToolsManager: ObservableObject {
 
     /// Get tool schemas for API calls (OpenAI/Anthropic format)
     /// Uses centralized ToolSchemas as the single source of truth
+    /// Includes internal helper tools that are always available
     func getToolSchemas() -> [[String: Any]] {
         let enabledSchemas = enabledTools.compactMap { tool in
             ToolSchemas.schema(for: tool.id)
         }
-        return ToolSchemas.asAnthropicFormat(enabledSchemas)
+        // Add internal tools (always enabled, not shown to users)
+        let allSchemas = enabledSchemas + ToolSchemas.allInternal
+        return ToolSchemas.asAnthropicFormat(allSchemas)
     }
 
     /// Get tool schemas in OpenAI/Ollama format
+    /// Includes internal helper tools that are always available
     func getToolSchemasOpenAI() -> [[String: Any]] {
         let enabledSchemas = enabledTools.compactMap { tool in
             ToolSchemas.schema(for: tool.id)
         }
-        return ToolSchemas.asOpenAIFormat(enabledSchemas)
+        // Add internal tools (always enabled, not shown to users)
+        let allSchemas = enabledSchemas + ToolSchemas.allInternal
+        return ToolSchemas.asOpenAIFormat(allSchemas)
     }
 }
 
