@@ -39,6 +39,7 @@ struct VisualEffectView: NSViewRepresentable {
 extension Notification.Name {
     static let toggleSettings = Notification.Name("toggleSettings")
     static let openSettings = Notification.Name("openSettings")
+    static let ingestProject = Notification.Name("ingestProject")
     static let newChat = Notification.Name("newChat")
     static let sendInitialMessage = Notification.Name("sendInitialMessage")
     static let memoriesExtracted = Notification.Name("memoriesExtracted")
@@ -92,6 +93,11 @@ struct VaizorApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
+                Button("Ingest Project...") {
+                    NotificationCenter.default.post(name: .ingestProject, object: nil)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
                 Divider()
 
                 Button("Export Conversation...") {
@@ -103,9 +109,9 @@ struct VaizorApp: App {
                     NotificationCenter.default.post(name: .importConversation, object: nil)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
-                
+
                 Divider()
-                
+
                 Button("Close Window") {
                     NSApplication.shared.keyWindow?.close()
                 }
@@ -244,6 +250,7 @@ struct ContentView: View {
     // Onboarding state
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
+    @State private var showProjectIngestion = false
 
     // Adaptive colors for light/dark mode
     private var colors: AdaptiveColors {
@@ -437,6 +444,14 @@ struct ContentView: View {
             OnboardingView(isPresented: $showOnboarding)
                 .frame(minWidth: 800, minHeight: 600)
                 .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: $showProjectIngestion) {
+            ProjectIngestionView(isPresented: $showProjectIngestion)
+                .environmentObject(container)
+                .frame(minWidth: 700, minHeight: 550)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ingestProject)) { _ in
+            showProjectIngestion = true
         }
         .onChange(of: showOnboarding) { oldValue, newValue in
             // When onboarding is dismissed (showOnboarding becomes false),
