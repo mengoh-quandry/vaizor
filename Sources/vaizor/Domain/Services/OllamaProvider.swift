@@ -118,9 +118,6 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         guard let url = URL(string: "\(baseURL)/api/chat") else {
             throw NSError(domain: "OllamaProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid Ollama URL: \(baseURL)/api/chat"])
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // Get context enhancement settings
         let enableDatetimeInjection = await MainActor.run { AppSettings.shared.enableDatetimeInjection }
@@ -128,7 +125,6 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
 
         // Apply context enhancement for local models
         var enhancedSystemPrompt = configuration.systemPrompt
-        var contextEnhanced = false
 
         if enableDatetimeInjection || enableAutoRefresh {
             let contextEnhancer = await MainActor.run { ContextEnhancer.shared }
@@ -153,7 +149,6 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
                     basePrompt: configuration.systemPrompt,
                     context: enhancedContext
                 )
-                contextEnhanced = true
 
                 // Log enhancement
                 if enhancedContext.hasFreshData {
@@ -232,32 +227,15 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
             body["tools"] = toolSchemas
         }
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        // Use concurrent URLSession configuration for better performance
-        let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.httpMaximumConnectionsPerHost = 10
-        sessionConfig.timeoutIntervalForRequest = 300
-        sessionConfig.timeoutIntervalForResource = 600
-        let session = URLSession(configuration: sessionConfig)
-        
-        let (asyncBytes, response) = try await session.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw NSError(domain: "OllamaProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to connect to Ollama"])
-        }
-
-        var fullResponse = ""
-        var pendingToolCalls: [OllamaToolCall] = []
         var currentMessages = messages
+        var fullResponse = ""
 
         // Tool execution loop - keep processing until we get a final response or hit iteration limit
         var iteration = 0
         while iteration < Self.maxToolIterations {
             iteration += 1
 
-            // Stream the response
+            // Stream the response (creates fresh request each iteration)
             let streamResult = try await streamOllamaResponse(
                 url: url,
                 body: body,
@@ -277,27 +255,34 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
             // Execute tool calls
             onThinkingStatusUpdate("Executing \(streamResult.toolCalls.count) tool(s)...")
 
+            // First, add the assistant message with all tool calls
+            var toolCallsArray: [[String: Any]] = []
+            for toolCall in streamResult.toolCalls {
+                toolCallsArray.append([
+                    "function": [
+                        "name": toolCall.name,
+                        "arguments": toolCall.arguments
+                    ]
+                ])
+            }
+
+            let assistantMessage: [String: Any] = [
+                "role": "assistant",
+                "content": streamResult.content,
+                "tool_calls": toolCallsArray
+            ]
+            currentMessages.append(assistantMessage)
+
+            // Then execute each tool and add its result
             for toolCall in streamResult.toolCalls {
                 onThinkingStatusUpdate("Running \(toolCall.name)...")
 
                 let result = await executeToolCall(toolCall, onArtifactCreated: onArtifactCreated)
 
-                // Add assistant message with tool call
-                let assistantMessage: [String: Any] = [
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [[
-                        "function": [
-                            "name": toolCall.name,
-                            "arguments": toolCall.arguments
-                        ]
-                    ]]
-                ]
-                currentMessages.append(assistantMessage)
-
-                // Add tool response
+                // Add tool response with tool_name (required by Ollama API)
                 let toolMessage: [String: Any] = [
                     "role": "tool",
+                    "tool_name": toolCall.name,
                     "content": result.result
                 ]
                 currentMessages.append(toolMessage)
@@ -646,7 +631,8 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
             guard let url = arguments["url"] as? String else {
                 return ToolExecutionResult(toolName: "browser_action", success: false, result: "Missing 'url' for navigate action")
             }
-            await MainActor.run {
+            // Navigate browser (fire and forget, navigation happens asynchronously)
+            _ = await MainActor.run {
                 Task {
                     await BrowserService.shared.navigate(to: url)
                 }
@@ -762,7 +748,8 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
                 }
             default: scrollPos = .top
             }
-            await MainActor.run {
+            // Scroll browser (fire and forget)
+            _ = await MainActor.run {
                 Task {
                     await BrowserService.shared.scroll(to: scrollPos)
                 }

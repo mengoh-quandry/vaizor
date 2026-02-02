@@ -961,65 +961,91 @@ struct ChatView: View {
             scrollState.reset()
         }
         .onKeyPress { press in
-            // Command+K to open palette
-            if press.modifiers.contains(.command) && press.key.character == "k" {
-                showCommandPalette = true
+            // Command shortcuts (always handled at view level)
+            if press.modifiers.contains(.command) {
+                // Cmd+K: Command palette
+                if press.key.character == "k" {
+                    showCommandPalette = true
+                    return .handled
+                }
+                // Cmd++/Cmd+=: Zoom in
+                if press.key.character == "=" || press.key.character == "+" {
+                    let newZoom = min(2.0, chatFontZoom + 0.1)
+                    chatFontZoom = newZoom
+                    NotificationCenter.default.post(name: .chatFontZoomChanged, object: newZoom)
+                    return .handled
+                }
+                // Cmd+-: Zoom out
+                if press.key.character == "-" {
+                    let newZoom = max(0.5, chatFontZoom - 0.1)
+                    chatFontZoom = newZoom
+                    NotificationCenter.default.post(name: .chatFontZoomChanged, object: newZoom)
+                    return .handled
+                }
+                // Cmd+0: Reset zoom
+                if press.key.character == "0" {
+                    chatFontZoom = 1.0
+                    NotificationCenter.default.post(name: .chatFontZoomChanged, object: 1.0)
+                    return .handled
+                }
+            }
+
+            // When input is focused, let the TextField handle most keys
+            // Only intercept mention navigation when suggestions are visible
+            if isInputFocused {
+                if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                    switch press.key {
+                    case .upArrow:
+                        selectedMentionIndex = max(0, selectedMentionIndex - 1)
+                        return .handled
+                    case .downArrow:
+                        selectedMentionIndex = min(mentionSuggestions.count - 1, selectedMentionIndex + 1)
+                        return .handled
+                    case .escape:
+                        showMentionSuggestions = false
+                        return .handled
+                    case .tab:
+                        selectMention(at: selectedMentionIndex)
+                        return .handled
+                    default:
+                        // Let TextField handle Enter and other keys
+                        return .ignored
+                    }
+                }
+                // Input is focused but no mention suggestions - let TextField handle all keys
+                return .ignored
+            }
+
+            // When input is NOT focused, handle navigation keys
+            switch press.key {
+            case .upArrow:
+                navigateMessages(direction: -1)
                 return .handled
-            }
-
-            // Handle mention suggestion navigation when suggestions are shown
-            if showMentionSuggestions && !mentionSuggestions.isEmpty {
-                switch press.key {
-                case .upArrow:
-                    selectedMentionIndex = max(0, selectedMentionIndex - 1)
-                    return .handled
-                case .downArrow:
-                    selectedMentionIndex = min(mentionSuggestions.count - 1, selectedMentionIndex + 1)
-                    return .handled
-                case .return:
-                    selectMention(at: selectedMentionIndex)
-                    return .handled
-                case .escape:
-                    showMentionSuggestions = false
-                    return .handled
-                case .tab:
-                    selectMention(at: selectedMentionIndex)
-                    return .handled
-                default:
-                    break
-                }
-            }
-
-            // Arrow key navigation for messages (when not typing)
-            if !isInputFocused {
-                switch press.key {
-                case .upArrow:
-                    navigateMessages(direction: -1)
-                    return .handled
-                case .downArrow:
-                    navigateMessages(direction: 1)
-                    return .handled
-                case .home:
-                    // Jump to first message
-                    if let firstMessage = viewModel.messages.first, let proxy = scrollProxy {
-                        focusedMessageIndex = 0
-                        withAnimation(VaizorAnimations.smoothScroll) {
-                            proxy.scrollTo(firstMessage.id, anchor: .top)
-                        }
+            case .downArrow:
+                navigateMessages(direction: 1)
+                return .handled
+            case .home:
+                if let firstMessage = viewModel.messages.first, let proxy = scrollProxy {
+                    focusedMessageIndex = 0
+                    withAnimation(VaizorAnimations.smoothScroll) {
+                        proxy.scrollTo(firstMessage.id, anchor: .top)
                     }
-                    return .handled
-                case .end:
-                    // Jump to last message
-                    if let lastMessage = viewModel.messages.last, let proxy = scrollProxy {
-                        focusedMessageIndex = viewModel.messages.count - 1
-                        withAnimation(VaizorAnimations.smoothScroll) {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
-                    return .handled
-                default:
-                    break
                 }
+                return .handled
+            case .end:
+                if let lastMessage = viewModel.messages.last, let proxy = scrollProxy {
+                    focusedMessageIndex = viewModel.messages.count - 1
+                    withAnimation(VaizorAnimations.smoothScroll) {
+                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    }
+                }
+                return .handled
+            case .escape:
+                // Re-focus input when pressing Escape outside
+                isInputFocused = true
+                return .handled
+            default:
+                break
             }
 
             return .ignored
@@ -1685,12 +1711,17 @@ struct ChatView: View {
             messageContent = contextPrefix + messageContent
         }
 
-        // Clear input state
+        // Clear input state and ensure focus is maintained
         messageText = ""
         droppedFiles = []
         activeMentions = []
         mentionContext = nil
         showMentionSuggestions = false
+
+        // Re-ensure focus after state changes (prevents focus loss during view updates)
+        DispatchQueue.main.async {
+            isInputFocused = true
+        }
 
         // Use conversation-specific model if set, otherwise use global
         let conversation = conversationManager.conversations.first(where: { $0.id == conversationId })
@@ -1700,7 +1731,7 @@ struct ChatView: View {
         // Build system prompt with tool guidance and project context
         // Always include base prompt with tool guidance, optionally prepend user's custom prefix
         let toolInfos = SystemPrompts.builtInTools + ToolSchemas.allInternal.map { $0.asToolInfo() }
-        var baseSystemPrompt = SystemPrompts.generateComplete(
+        let baseSystemPrompt = SystemPrompts.generateComplete(
             tools: toolInfos,
             includeArtifactGuidelines: true,
             includeAgenticBehavior: true,
