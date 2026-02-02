@@ -831,7 +831,7 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         return ToolExecutionResult(toolName: "get_current_time", success: true, result: result)
     }
 
-    /// Get user's approximate location from system settings
+    /// Get user's approximate location from IP geolocation + system settings
     private func executeGetLocation() async -> ToolExecutionResult {
         let timezone = TimeZone.current
         let locale = Locale.current
@@ -840,24 +840,72 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         let languageCode = locale.language.languageCode?.identifier ?? "unknown"
         let regionCode = locale.region?.identifier ?? "unknown"
 
-        // Estimate location from timezone
-        let timezoneCity = timezone.identifier.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? "Unknown"
-        let timezoneRegion = timezone.identifier.components(separatedBy: "/").first ?? "Unknown"
+        // Try IP-based geolocation first for more accuracy
+        var ipLocation: (city: String, region: String, country: String, lat: Double, lon: Double)?
 
-        // Get region name
-        let regionName = locale.localizedString(forRegionCode: regionCode) ?? regionCode
+        do {
+            // Use ip-api.com (free, no API key needed, 45 requests/minute)
+            guard let url = URL(string: "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon,timezone,isp") else {
+                throw NSError(domain: "Location", code: -1, userInfo: nil)
+            }
 
-        let result = """
-        Approximate Location (based on system settings):
-        City/Area: \(timezoneCity)
-        Region: \(timezoneRegion)
-        Country: \(regionName) (\(regionCode))
-        Timezone: \(timezone.identifier)
-        UTC Offset: \(timezone.secondsFromGMT() >= 0 ? "+" : "")\(timezone.secondsFromGMT() / 3600) hours
-        Language: \(languageCode)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
 
-        Note: This is derived from system timezone and locale settings, not GPS.
-        """
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "success" else {
+                throw NSError(domain: "Location", code: -1, userInfo: nil)
+            }
+
+            let city = json["city"] as? String ?? "Unknown"
+            let region = json["regionName"] as? String ?? "Unknown"
+            let country = json["country"] as? String ?? "Unknown"
+            let lat = json["lat"] as? Double ?? 0
+            let lon = json["lon"] as? Double ?? 0
+
+            ipLocation = (city, region, country, lat, lon)
+        } catch {
+            // IP geolocation failed, will fall back to timezone-based
+        }
+
+        // Build result with IP location if available, fallback to timezone
+        let result: String
+        if let loc = ipLocation {
+            result = """
+            User Location (via IP geolocation):
+            City: \(loc.city)
+            Region: \(loc.region)
+            Country: \(loc.country)
+            Coordinates: \(String(format: "%.4f", loc.lat)), \(String(format: "%.4f", loc.lon))
+            Timezone: \(timezone.identifier)
+            UTC Offset: \(timezone.secondsFromGMT() >= 0 ? "+" : "")\(timezone.secondsFromGMT() / 3600) hours
+            Language: \(languageCode)
+
+            Note: Location based on IP address, approximate to city level.
+            """
+        } else {
+            // Fallback to timezone-based estimation
+            let timezoneCity = timezone.identifier.components(separatedBy: "/").last?.replacingOccurrences(of: "_", with: " ") ?? "Unknown"
+            let timezoneRegion = timezone.identifier.components(separatedBy: "/").first ?? "Unknown"
+            let regionName = locale.localizedString(forRegionCode: regionCode) ?? regionCode
+
+            result = """
+            Approximate Location (based on system settings):
+            City/Area: \(timezoneCity)
+            Region: \(timezoneRegion)
+            Country: \(regionName) (\(regionCode))
+            Timezone: \(timezone.identifier)
+            UTC Offset: \(timezone.secondsFromGMT() >= 0 ? "+" : "")\(timezone.secondsFromGMT() / 3600) hours
+            Language: \(languageCode)
+
+            Note: IP geolocation unavailable, using timezone/locale settings.
+            """
+        }
 
         return ToolExecutionResult(toolName: "get_location", success: true, result: result)
     }
