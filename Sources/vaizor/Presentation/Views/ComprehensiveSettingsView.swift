@@ -829,16 +829,16 @@ struct MCPServersSettingsView: View {
                                     server: server,
                                     isEnabled: container.mcpManager.enabledServers.contains(server.id),
                                     onToggle: { enabled in
-                                        if enabled {
-                                            Task {
+                                        Task {
+                                            if enabled {
                                                 do {
                                                     try await container.mcpManager.startServer(server)
                                                 } catch {
                                                     AppLogger.shared.logError(error, context: "Failed to start MCP server")
                                                 }
+                                            } else {
+                                                await container.mcpManager.stopServer(server)
                                             }
-                                        } else {
-                                            container.mcpManager.stopServer(server)
                                         }
                                     }
                                 )

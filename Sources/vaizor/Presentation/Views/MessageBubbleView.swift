@@ -6,7 +6,7 @@ struct MessageBubbleView: View {
     let provider: LLMProvider?
     let isPromptEnhanced: Bool
     let onCopy: (() -> Void)?
-    let onEdit: (() -> Void)?
+    let onEdit: ((String) -> Void)?  // Changed: passes the new content when saved
     let onDelete: (() -> Void)?
     let onRegenerate: (() -> Void)?
     let onRegenerateDifferent: (() -> Void)?
@@ -19,7 +19,7 @@ struct MessageBubbleView: View {
         provider: LLMProvider? = nil,
         isPromptEnhanced: Bool = false,
         onCopy: (() -> Void)? = nil,
-        onEdit: (() -> Void)? = nil,
+        onEdit: ((String) -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onRegenerate: (() -> Void)? = nil,
         onRegenerateDifferent: (() -> Void)? = nil,
@@ -39,6 +39,11 @@ struct MessageBubbleView: View {
         self.animationIndex = animationIndex
         self.shouldAnimateAppear = shouldAnimateAppear
     }
+
+    // Editing state
+    @State private var isEditing = false
+    @State private var editText = ""
+    @FocusState private var isEditFocused: Bool
 
     @State private var isHovered = false
     @State private var hoverTask: Task<Void, Never>?
@@ -99,14 +104,65 @@ struct MessageBubbleView: View {
                         }
                     }
 
-                    // Markdown content with inline images
-                    CollapsibleMessageContent(
-                        content: message.content,
-                        role: message.role,
-                        isPromptEnhanced: isPromptEnhanced,
-                        messageId: message.id,
-                        conversationId: message.conversationId
-                    )
+                    // Show editing UI or regular content
+                    if isEditing && message.role == .user {
+                        // Inline editing view
+                        VStack(alignment: .trailing, spacing: VaizorSpacing.xs) {
+                            TextEditor(text: $editText)
+                                .font(.system(size: 15))
+                                .scrollContentBackground(.hidden)
+                                .background(Color(nsColor: .textBackgroundColor))
+                                .cornerRadius(VaizorSpacing.radiusMd)
+                                .frame(minHeight: 60, maxHeight: 200)
+                                .focused($isEditFocused)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: VaizorSpacing.radiusMd)
+                                        .stroke(colors.accent.opacity(0.5), lineWidth: 1)
+                                )
+
+                            // Save/Cancel buttons
+                            HStack(spacing: VaizorSpacing.xs) {
+                                Button {
+                                    cancelEditing()
+                                } label: {
+                                    Text("Cancel")
+                                        .font(VaizorTypography.caption)
+                                        .fontWeight(.medium)
+                                        .padding(.horizontal, VaizorSpacing.sm)
+                                        .padding(.vertical, VaizorSpacing.xxs)
+                                }
+                                .buttonStyle(.plain)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .cornerRadius(VaizorSpacing.radiusSm)
+                                .keyboardShortcut(.escape, modifiers: [])
+
+                                Button {
+                                    saveEdit()
+                                } label: {
+                                    Text("Save & Regenerate")
+                                        .font(VaizorTypography.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, VaizorSpacing.sm)
+                                        .padding(.vertical, VaizorSpacing.xxs)
+                                }
+                                .buttonStyle(.plain)
+                                .background(colors.accent)
+                                .cornerRadius(VaizorSpacing.radiusSm)
+                                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .keyboardShortcut(.return, modifiers: .command)
+                            }
+                        }
+                    } else {
+                        // Markdown content with inline images
+                        CollapsibleMessageContent(
+                            content: message.content,
+                            role: message.role,
+                            isPromptEnhanced: isPromptEnhanced,
+                            messageId: message.id,
+                            conversationId: message.conversationId
+                        )
+                    }
                 }
                 .padding(.horizontal, VaizorSpacing.md)
                 .padding(.vertical, VaizorSpacing.sm)
@@ -123,18 +179,21 @@ struct MessageBubbleView: View {
                     .padding(.horizontal, VaizorSpacing.xxs)
 
                 // Action row - always present but hidden until hover (prevents layout shift)
-                MessageActionRow(
-                    message: message,
-                    isUser: message.role == .user,
-                    isPromptEnhanced: isPromptEnhanced && message.role == .user,
-                    onCopy: { onCopy?() },
-                    onEdit: message.role == .user ? onEdit : nil,
-                    onDelete: { onDelete?() },
-                    onRegenerate: message.role == .assistant ? onRegenerate : nil,
-                    onRegenerateDifferent: message.role == .assistant ? onRegenerateDifferent : nil,
-                    onScrollToTop: message.role == .assistant ? onScrollToTop : nil
-                )
-                .opacity(isHovered ? 1 : 0)
+                // Hide when editing
+                if !isEditing {
+                    MessageActionRow(
+                        message: message,
+                        isUser: message.role == .user,
+                        isPromptEnhanced: isPromptEnhanced && message.role == .user,
+                        onCopy: { onCopy?() },
+                        onEdit: message.role == .user ? { startEditing() } : nil,
+                        onDelete: { onDelete?() },
+                        onRegenerate: message.role == .assistant ? onRegenerate : nil,
+                        onRegenerateDifferent: message.role == .assistant ? onRegenerateDifferent : nil,
+                        onScrollToTop: message.role == .assistant ? onScrollToTop : nil
+                    )
+                    .opacity(isHovered ? 1 : 0)
+                }
             }
             // Constrain message width to ~75% of container
             .frame(maxWidth: 800)
@@ -457,7 +516,7 @@ struct MessageBubbleView: View {
             .markdownBlockStyle(\.codeBlock) { configuration in
                 CodeBlockView(
                     language: configuration.language,
-                    messageContent: message.content,
+                    codeContent: configuration.content,
                     codeLabel: configuration.label,
                     messageId: message.id,
                     conversationId: message.conversationId
@@ -495,13 +554,50 @@ struct MessageBubbleView: View {
         let cacheKey = "\(message.id.uuidString)-\(message.content.hashValue)"
         _ = await MarkdownRenderService.shared.render(message.content, cacheKey: cacheKey)
     }
-    
+
+    // MARK: - Editing Methods
+
+    private func startEditing() {
+        editText = message.content
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isEditing = true
+        }
+        // Focus the text editor after a brief delay to allow the view to appear
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            isEditFocused = true
+        }
+    }
+
+    private func cancelEditing() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isEditing = false
+        }
+        editText = ""
+        isEditFocused = false
+    }
+
+    private func saveEdit() {
+        let trimmedText = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
+
+        // Only save if the text actually changed
+        if trimmedText != message.content {
+            onEdit?(trimmedText)
+        }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isEditing = false
+        }
+        editText = ""
+        isEditFocused = false
+    }
+
 }
 
 // Code block view with copy button, execution, and artifact preview
 struct CodeBlockView<CodeLabel: View>: View {
     let language: String?
-    let messageContent: String
+    let codeContent: String
     let codeLabel: CodeLabel
     let messageId: UUID
     let conversationId: UUID
@@ -509,7 +605,6 @@ struct CodeBlockView<CodeLabel: View>: View {
     @State private var isHovered = false
     @State private var showCopiedFeedback = false
     @State private var copyButtonScale: CGFloat = 1.0
-    @State private var codeContent: String = ""
     @State private var showExecution = false
     @State private var showArtifactPreview = false
     @State private var isArtifactExpanded = false
@@ -603,9 +698,6 @@ struct CodeBlockView<CodeLabel: View>: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
-        }
-        .onAppear {
-            extractCodeContent()
         }
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .sheet(isPresented: $showArtifactPreview) {
@@ -797,18 +889,6 @@ struct CodeBlockView<CodeLabel: View>: View {
         }
 
         return nil
-    }
-    
-    private func extractCodeContent() {
-        // Extract code content from markdown code blocks
-        // Match code blocks with optional language: ```language\ncode\n```
-        let pattern = "```(?:[a-zA-Z0-9+_-]+)?\\n([\\s\\S]*?)```"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
-           let match = regex.firstMatch(in: messageContent, options: [], range: NSRange(messageContent.startIndex..., in: messageContent)),
-           match.range(at: 1).location != NSNotFound,
-           let codeRange = Range(match.range(at: 1), in: messageContent) {
-            codeContent = String(messageContent[codeRange])
-        }
     }
     
     private func copyCode() {

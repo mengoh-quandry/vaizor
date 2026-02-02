@@ -162,7 +162,9 @@ class MCPServerManager: ObservableObject {
     }
 
     func removeServer(_ server: MCPServer) {
-        stopServer(server)
+        Task {
+            await stopServer(server)
+        }
         availableServers.removeAll { $0.id == server.id }
         deleteServer(server)
     }
@@ -170,15 +172,15 @@ class MCPServerManager: ObservableObject {
     func updateServer(_ server: MCPServer) {
         if let index = availableServers.firstIndex(where: { $0.id == server.id }) {
             let wasRunning = enabledServers.contains(server.id)
-            if wasRunning {
-                stopServer(availableServers[index])
-            }
+            let oldServer = availableServers[index]
 
             availableServers[index] = server
             upsertServer(server)
 
             if wasRunning {
+                // Stop and restart in a single Task to ensure proper sequencing
                 Task {
+                    await stopServer(oldServer)
                     try? await startServer(server)
                 }
             }
@@ -466,7 +468,7 @@ class MCPServerManager: ObservableObject {
             AppLogger.shared.logError(error, context: "Failed to start MCP server \(server.name)")
             
             if connectionStarted {
-                connection?.stop()
+                await connection?.stop()
             }
             
             await MainActor.run {
@@ -646,14 +648,14 @@ class MCPServerManager: ObservableObject {
         return path
     }
 
-    func stopServer(_ server: MCPServer) {
+    func stopServer(_ server: MCPServer) async {
         AppLogger.shared.log("Stopping MCP server: \(server.name) (ID: \(server.id))", level: .info)
         guard let connection = serverProcesses[server.id] else {
             AppLogger.shared.log("MCP server \(server.name) is not running", level: .warning)
             return
         }
 
-        connection.stop()
+        await connection.stop()
         serverProcesses.removeValue(forKey: server.id)
         enabledServers.remove(server.id)
 
@@ -1618,6 +1620,31 @@ private actor PendingRequestsManager {
     }
 }
 
+/// Actor to safely manage resource subscriptions, eliminating race conditions with NSLock
+private actor ResourceSubscriptionsManager {
+    private var subscriptions: Set<String> = []
+
+    /// Add a subscription
+    func insert(_ uri: String) {
+        subscriptions.insert(uri)
+    }
+
+    /// Remove a subscription
+    func remove(_ uri: String) {
+        subscriptions.remove(uri)
+    }
+
+    /// Check if subscribed to a URI
+    func contains(_ uri: String) -> Bool {
+        return subscriptions.contains(uri)
+    }
+
+    /// Get all subscriptions
+    func getAll() -> Set<String> {
+        return subscriptions
+    }
+}
+
 // MARK: - MCP Notification Types
 
 /// Progress information from MCP server
@@ -1691,9 +1718,8 @@ class MCPServerConnection {
     // Notification callbacks for handling server events
     private var notificationCallbacks: MCPNotificationCallbacks?
 
-    // Resource subscriptions tracking
-    private var resourceSubscriptions: Set<String> = []
-    private let subscriptionsLock = NSLock()
+    // Resource subscriptions tracking (actor-based for thread safety)
+    private let subscriptionsManager = ResourceSubscriptionsManager()
 
     // Server capabilities (populated after initialize)
     private var serverCapabilities: [String: Any] = [:]
@@ -1769,62 +1795,59 @@ class MCPServerConnection {
 
     /// Stop the MCP server process with proper cleanup
     /// Waits for the process to exit (with timeout) and closes all pipes to prevent resource leaks
-    func stop() {
+    /// - Note: This function is async to ensure cleanup completes before returning
+    func stop() async {
         let pid = process.processIdentifier
-        Task { @MainActor in
+        await MainActor.run {
             AppLogger.shared.log("Stopping MCP server process (PID: \(pid))", level: .info)
         }
+
+        // Close stdin first to signal the process to exit gracefully
+        try? stdinPipe.fileHandleForWriting.close()
 
         // Terminate the process
         process.terminate()
 
         // Wait for process exit with timeout to ensure clean shutdown
-        let waitTask = Task.detached { [process] in
-            process.waitUntilExit()
+        let timeoutNanoseconds: UInt64 = 5_000_000_000 // 5 seconds
+        let startTime = DispatchTime.now()
+
+        while process.isRunning {
+            let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
+            if elapsed > timeoutNanoseconds {
+                await MainActor.run {
+                    AppLogger.shared.log("MCP server process (PID: \(pid)) did not exit within timeout, forcing termination", level: .warning)
+                }
+                // Force kill if still running after timeout
+                if process.isRunning {
+                    kill(pid, SIGKILL)
+                    // Brief wait for SIGKILL to take effect
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                break
+            }
+
+            try? await Task.sleep(nanoseconds: 100_000_000) // Check every 100ms
         }
 
-        // Give the process up to 5 seconds to exit gracefully
-        Task {
-            let timeoutNanoseconds: UInt64 = 5_000_000_000 // 5 seconds
-            let startTime = DispatchTime.now()
+        // Wait for process to fully exit after termination/kill
+        process.waitUntilExit()
 
-            while !waitTask.isCancelled {
-                if !process.isRunning {
-                    break
-                }
+        // Close remaining pipes to release file descriptors
+        try? stdoutPipe.fileHandleForReading.close()
+        try? stderrPipe.fileHandleForReading.close()
 
-                let elapsed = DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds
-                if elapsed > timeoutNanoseconds {
-                    Task { @MainActor in
-                        AppLogger.shared.log("MCP server process (PID: \(pid)) did not exit within timeout, forcing termination", level: .warning)
-                    }
-                    // Force kill if still running after timeout
-                    if process.isRunning {
-                        kill(pid, SIGKILL)
-                    }
-                    break
-                }
-
-                try? await Task.sleep(nanoseconds: 100_000_000) // Check every 100ms
+        // Cancel any pending requests
+        let pending = await pendingRequestsManager.removeAllRequests()
+        if !pending.isEmpty {
+            let error = NSError(domain: "MCPServer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Server stopped"])
+            for (_, continuation) in pending {
+                continuation.resume(throwing: error)
             }
+        }
 
-            // Close all pipes to release file descriptors
-            try? stdinPipe.fileHandleForWriting.close()
-            try? stdoutPipe.fileHandleForReading.close()
-            try? stderrPipe.fileHandleForReading.close()
-
-            // Cancel any pending requests
-            let pending = await pendingRequestsManager.removeAllRequests()
-            if !pending.isEmpty {
-                let error = NSError(domain: "MCPServer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Server stopped"])
-                for (_, continuation) in pending {
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            Task { @MainActor in
-                AppLogger.shared.log("MCP server process (PID: \(pid)) stopped and resources cleaned up", level: .info)
-            }
+        await MainActor.run {
+            AppLogger.shared.log("MCP server process (PID: \(pid)) stopped and resources cleaned up", level: .info)
         }
     }
     
@@ -2335,8 +2358,12 @@ class MCPServerConnection {
                 continue
             }
 
-            // Check if this is a notification (no ID) or a request from server (has ID and method)
-            if json["id"] == nil {
+            // Check if this is a notification (no ID or null ID) or a request from server (has ID and method)
+            // JSON-RPC notifications have no "id" field, but some servers may send "id": null
+            let idValue = json["id"]
+            let isNotification = idValue == nil || idValue is NSNull
+
+            if isNotification {
                 // This is a notification from server - route it appropriately
                 if let method = json["method"] as? String {
                     await handleNotification(method: method, params: json["params"] as? [String: Any])
@@ -2447,7 +2474,7 @@ class MCPServerConnection {
                     AppLogger.shared.log("Resource updated notification: \(uri)", level: .info)
                 }
                 // Only notify if we're subscribed to this resource
-                let isSubscribed = subscriptionsLock.withLock { resourceSubscriptions.contains(uri) }
+                let isSubscribed = await subscriptionsManager.contains(uri)
                 if isSubscribed {
                     await notificationCallbacks?.onResourceUpdated?(uri)
                 }
@@ -2825,9 +2852,7 @@ class MCPServerConnection {
         let params = wrapAnyCodable(["uri": uri])
         _ = try await sendRequest(method: "resources/subscribe", params: params)
 
-        _ = subscriptionsLock.withLock {
-            resourceSubscriptions.insert(uri)
-        }
+        await subscriptionsManager.insert(uri)
 
         Task { @MainActor in
             AppLogger.shared.log("Successfully subscribed to resource: \(uri)", level: .info)
@@ -2843,9 +2868,7 @@ class MCPServerConnection {
         let params = wrapAnyCodable(["uri": uri])
         _ = try await sendRequest(method: "resources/unsubscribe", params: params)
 
-        _ = subscriptionsLock.withLock {
-            resourceSubscriptions.remove(uri)
-        }
+        await subscriptionsManager.remove(uri)
 
         Task { @MainActor in
             AppLogger.shared.log("Successfully unsubscribed from resource: \(uri)", level: .info)
@@ -2853,13 +2876,13 @@ class MCPServerConnection {
     }
 
     /// Get the set of currently subscribed resources
-    func getSubscribedResources() -> Set<String> {
-        return subscriptionsLock.withLock { resourceSubscriptions }
+    func getSubscribedResources() async -> Set<String> {
+        return await subscriptionsManager.getAll()
     }
 
     /// Check if we're subscribed to a specific resource
-    func isSubscribedToResource(uri: String) -> Bool {
-        return subscriptionsLock.withLock { resourceSubscriptions.contains(uri) }
+    func isSubscribedToResource(uri: String) async -> Bool {
+        return await subscriptionsManager.contains(uri)
     }
 }
 

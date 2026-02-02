@@ -57,7 +57,15 @@ struct ConversationModelSelector: View {
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
-        .help("Select model")
+        .help(container.lastProviderError != nil ? "Error: \(container.lastProviderError!.localizedDescription)" : "Select model")
         .frame(maxWidth: 170)
+        .overlay(alignment: .topTrailing) {
+            if container.lastProviderError != nil && effectiveProvider == .ollama {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.orange)
+                    .offset(x: 4, y: -4)
+            }
+        }
     }
 }

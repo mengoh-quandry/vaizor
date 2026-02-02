@@ -107,6 +107,49 @@ struct SettingsView: View {
                             .font(.title2)
                             .fontWeight(.semibold)
 
+                        // Display Ollama error if present
+                        if let error = container.lastProviderError {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.title3)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Ollama Error")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text(error.localizedDescription)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+
+                                    Button {
+                                        Task {
+                                            await container.loadModelsForCurrentProvider()
+                                        }
+                                    } label: {
+                                        Label("Retry", systemImage: "arrow.clockwise")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .padding(.top, 4)
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    container.lastProviderError = nil
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding()
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Default Model", systemImage: "circle.grid.3x3.fill")
                                 .font(.subheadline)

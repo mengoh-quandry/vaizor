@@ -189,6 +189,19 @@ actor ConversationRepository {
         }
     }
 
+    func updateMessage(_ message: Message) async {
+        do {
+            try await dbQueue.write { db in
+                var record = MessageRecord(message)
+                try record.update(db)
+            }
+        } catch {
+            await MainActor.run {
+                AppLogger.shared.logError(error, context: "Failed to update message \(message.id)")
+            }
+        }
+    }
+
     private static func saveAttachments(message: Message, in db: Database) throws {
         guard let attachments = message.attachments else { return }
         for attachment in attachments {

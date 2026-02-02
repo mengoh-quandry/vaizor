@@ -158,12 +158,12 @@ struct MCPServerRow: View {
                     Toggle("", isOn: Binding(
                         get: { container.mcpManager.enabledServers.contains(server.id) },
                         set: { enabled in
-                            if enabled {
-                                Task {
+                            Task {
+                                if enabled {
                                     try? await container.mcpManager.startServer(server)
+                                } else {
+                                    await container.mcpManager.stopServer(server)
                                 }
-                            } else {
-                                container.mcpManager.stopServer(server)
                             }
                         }
                     ))

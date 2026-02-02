@@ -288,6 +288,52 @@ class ChatViewModel: ObservableObject {
         contextEnhancementDetails = nil
     }
 
+    /// Edit a user message and regenerate the AI response from that point
+    /// This removes all messages after the edited message and regenerates
+    func editMessage(_ messageId: UUID, newContent: String, configuration: LLMConfiguration) async {
+        // Find the message index
+        guard let messageIndex = messages.firstIndex(where: { $0.id == messageId }) else {
+            error = "Message not found"
+            return
+        }
+
+        // Verify it's a user message
+        guard messages[messageIndex].role == .user else {
+            error = "Can only edit user messages"
+            return
+        }
+
+        let oldMessage = messages[messageIndex]
+
+        // Remove all messages after this one (including any AI response)
+        let messagesToRemove = Array(messages.suffix(from: messageIndex + 1))
+        messages.removeSubrange((messageIndex + 1)...)
+
+        // Delete removed messages from repository
+        for message in messagesToRemove {
+            await conversationRepository.deleteMessage(message.id)
+        }
+
+        // Also delete the original message since sendMessage will create a new one
+        // with the same content (preserving attachments and mentions)
+        await conversationRepository.deleteMessage(oldMessage.id)
+        messages.remove(at: messageIndex)
+
+        // Set the target replace index to insert at the correct position
+        targetReplaceIndex = messageIndex
+
+        // Send the new message content to regenerate the response
+        // Convert mention references back to mentions for the new message
+        let mentions = oldMessage.mentionReferences?.map { Mention(from: $0) }
+        await sendMessage(
+            newContent,
+            configuration: configuration,
+            replaceAtIndex: messageIndex,
+            attachments: oldMessage.attachments,
+            mentionReferences: mentions
+        )
+    }
+
     /// Confirm sending a message that triggered injection warning
     func confirmSendWithInjectionWarning(_ text: String, configuration: LLMConfiguration, attachments: [MessageAttachment]? = nil) async {
         pendingInjectionWarning = nil

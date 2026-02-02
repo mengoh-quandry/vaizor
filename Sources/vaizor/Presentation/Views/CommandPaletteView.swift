@@ -206,7 +206,7 @@ struct PaletteCommand: Identifiable {
                 action: {
                     Task { @MainActor in
                         if isEnabled {
-                            container.mcpManager.stopServer(serverCopy)
+                            await container.mcpManager.stopServer(serverCopy)
                         } else {
                             try? await container.mcpManager.startServer(serverCopy)
                         }

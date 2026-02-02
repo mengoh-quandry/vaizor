@@ -1479,6 +1479,7 @@ struct ContentView: View {
                 )
                 .id("main-\(conversation.id)")
                 .environmentObject(container)
+                .environmentObject(conversationManager)
             } else {
                 WelcomeView(
                     onNewChat: {
@@ -1537,6 +1538,7 @@ struct ContentView: View {
                 )
                 .id("split-\(conversation.id)")
                 .environmentObject(container)
+                .environmentObject(conversationManager)
             }
         }
         .frame(maxWidth: .infinity)

@@ -1,18 +1,21 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChatInputView: View {
     @Binding var messageText: String
     @Binding var showSlashCommands: Bool
     @Binding var showWhiteboard: Bool
     @Binding var selectedModel: String
-    
+    @Binding var pendingAttachments: [PendingAttachment]
+
     let isStreaming: Bool
     let container: DependencyContainer
     let onSend: () -> Void
     let onStop: () -> Void
-    
+
     @AppStorage("defaultOllamaModel") private var defaultOllamaModel: String = ""
     @FocusState private var isInputFocused: Bool
+    @State private var isDropTargeted: Bool = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -31,11 +34,18 @@ struct ChatInputView: View {
             Divider()
 
             VStack(spacing: 12) {
+                // Attachment preview strip
+                if !pendingAttachments.isEmpty {
+                    AttachmentStripView(attachments: pendingAttachments) { attachment in
+                        pendingAttachments.removeAll { $0.id == attachment.id }
+                    }
+                }
+
                 // Top row: Icons and model selector
                 HStack(spacing: 12) {
                     // Left icons
                     leftIcons
-                    
+
                     Spacer()
 
                     // Model selector
@@ -52,29 +62,49 @@ struct ChatInputView: View {
             .background(Material.thin)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(inputBorder)
+            .overlay(dropHighlight)
             .shadow(color: inputShadowColor, radius: 8, x: 0, y: 3)
             .animation(.easeInOut(duration: 0.3), value: messageText.isEmpty)
             .animation(.easeInOut(duration: 0.3), value: isStreaming)
+            .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .onDrop(of: SupportedDropType.allTypes, isTargeted: $isDropTargeted) { providers in
+                handleDrop(providers: providers)
+                return true
+            }
         }
         .background(Material.ultraThin)
+    }
+
+    // MARK: - Drop Highlight Overlay
+
+    @ViewBuilder
+    private var dropHighlight: some View {
+        if isDropTargeted {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.accentColor, lineWidth: 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.accentColor.opacity(0.1))
+                )
+        }
     }
     
     private var leftIcons: some View {
         HStack(spacing: 8) {
             Button {
-                // Attach file
+                openFilePicker()
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(pendingAttachments.isEmpty ? .secondary : Color.accentColor)
             }
             .buttonStyle(.plain)
-            .help("Attach file")
+            .help("Attach file (drag & drop or Cmd+V to paste images)")
 
             Button {
-                // Open image
+                openImagePicker()
             } label: {
                 Image(systemName: "photo")
                     .font(.system(size: 20))
@@ -213,17 +243,21 @@ struct ChatInputView: View {
     
     private var inputRow: some View {
         HStack(spacing: 12) {
-            TextField("Ask anything or type / for commands", text: $messageText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .lineLimit(1...6)
-                .focused($isInputFocused)
-                .onChange(of: messageText) { _, newValue in
-                    showSlashCommands = newValue.hasPrefix("/") && newValue.count > 1
+            PasteableTextField(
+                text: $messageText,
+                placeholder: "Ask anything or type / for commands",
+                onPasteImage: { attachment in
+                    pendingAttachments.append(attachment)
                 }
-                .onSubmit {
-                    onSend()
-                }
+            )
+            .font(.system(size: 14))
+            .focused($isInputFocused)
+            .onChange(of: messageText) { _, newValue in
+                showSlashCommands = newValue.hasPrefix("/") && newValue.count > 1
+            }
+            .onSubmit {
+                onSend()
+            }
 
             Button {
                 if isStreaming {
@@ -238,7 +272,7 @@ struct ChatInputView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isStreaming)
+            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isStreaming && pendingAttachments.isEmpty)
             .keyboardShortcut(.return, modifiers: [])
         }
     }
@@ -274,4 +308,206 @@ struct ChatInputView: View {
             messageText = "/\(command.name) "
         }
     }
+
+    // MARK: - File Pickers
+
+    private func openFilePicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [
+            .png, .jpeg, .gif, .webP, .heic, .tiff, .bmp,
+            .pdf, .plainText, .json, .xml, .html, .sourceCode
+        ]
+        panel.message = "Select files to attach"
+        panel.prompt = "Attach"
+
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                if let attachment = ClipboardHandler.loadFile(from: url) {
+                    pendingAttachments.append(attachment)
+                }
+            }
+        }
+    }
+
+    private func openImagePicker() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .heic, .tiff, .bmp]
+        panel.message = "Select images to attach"
+        panel.prompt = "Add Images"
+
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                if let attachment = ClipboardHandler.loadFile(from: url) {
+                    pendingAttachments.append(attachment)
+                }
+            }
+        }
+    }
+
+    // MARK: - Drop Handling
+
+    private func handleDrop(providers: [NSItemProvider]) {
+        for provider in providers {
+            // Try to load as file URL first
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    if let data = item as? Data,
+                       let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        DispatchQueue.main.async {
+                            if let attachment = ClipboardHandler.loadFile(from: url) {
+                                self.pendingAttachments.append(attachment)
+                            }
+                        }
+                    }
+                }
+                continue
+            }
+
+            // Try to load as image data
+            for imageType in SupportedDropType.imageTypes {
+                if provider.hasItemConformingToTypeIdentifier(imageType.identifier) {
+                    provider.loadDataRepresentation(forTypeIdentifier: imageType.identifier) { data, error in
+                        if let data = data {
+                            let mimeType = SupportedDropType.mimeType(for: imageType)
+                            let ext = imageType.preferredFilenameExtension ?? "png"
+                            DispatchQueue.main.async {
+                                let attachment = PendingAttachment(
+                                    data: data,
+                                    filename: "dropped-image.\(ext)",
+                                    mimeType: mimeType
+                                )
+                                self.pendingAttachments.append(attachment)
+                            }
+                        }
+                    }
+                    break
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Pasteable TextField
+
+/// A text field that intercepts Cmd+V to handle image paste
+struct PasteableTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onPasteImage: (PendingAttachment) -> Void
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.textColor = NSColor.textColor
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.textContainerInset = NSSize(width: 0, height: 4)
+
+        // Set placeholder
+        textView.setValue(
+            NSAttributedString(
+                string: placeholder,
+                attributes: [
+                    .foregroundColor: NSColor.placeholderTextColor,
+                    .font: NSFont.systemFont(ofSize: 14)
+                ]
+            ),
+            forKey: "placeholderAttributedString"
+        )
+
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+
+        if textView.string != text {
+            let selectedRange = textView.selectedRange()
+            textView.string = text
+            // Restore selection if valid
+            if selectedRange.location <= text.count {
+                textView.setSelectedRange(selectedRange)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: PasteableTextField
+
+        init(_ parent: PasteableTextField) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            // Intercept paste command
+            if commandSelector == #selector(NSText.paste(_:)) {
+                // Check if clipboard has an image
+                if ClipboardHandler.hasImage() {
+                    if let attachment = ClipboardHandler.getImage() {
+                        parent.onPasteImage(attachment)
+                        return true // Handled
+                    }
+                }
+
+                // Check if clipboard has files
+                if ClipboardHandler.hasFiles() {
+                    let files = ClipboardHandler.getFiles()
+                    for file in files {
+                        parent.onPasteImage(file)
+                    }
+                    if !files.isEmpty {
+                        return true // Handled
+                    }
+                }
+
+                // Let default paste handle text
+                return false
+            }
+
+            // Handle Enter key for submit
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                // Check if Shift is held - if so, insert newline
+                if NSEvent.modifierFlags.contains(.shift) {
+                    return false // Let default handle it
+                }
+                // Otherwise submit
+                NotificationCenter.default.post(name: .submitChatInput, object: nil)
+                return true
+            }
+
+            return false
+        }
+    }
+}
+
+// Notification for submit
+extension Notification.Name {
+    static let submitChatInput = Notification.Name("submitChatInput")
 }
