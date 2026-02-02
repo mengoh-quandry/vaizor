@@ -94,7 +94,6 @@ struct SlashCommandView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(Color.clear)
-                                .hoverEffect(.highlight)
                         )
                     }
                 }
