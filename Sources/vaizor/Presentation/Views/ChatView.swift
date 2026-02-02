@@ -1697,8 +1697,15 @@ struct ChatView: View {
         let effectiveProvider = conversation?.selectedProvider ?? container.currentProvider
         let effectiveModel = conversation?.selectedModel ?? selectedModel
 
-        // Build system prompt with project context if available
-        let baseSystemPrompt = systemPromptPrefix.isEmpty ? nil : systemPromptPrefix
+        // Build system prompt with tool guidance and project context
+        // Always include base prompt with tool guidance, optionally prepend user's custom prefix
+        let toolInfos = SystemPrompts.builtInTools + ToolSchemas.allInternal.map { $0.asToolInfo() }
+        var baseSystemPrompt = SystemPrompts.generateComplete(
+            tools: toolInfos,
+            includeArtifactGuidelines: true,
+            includeAgenticBehavior: true,
+            customInstructions: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix
+        )
         let enhancedSystemPrompt = viewModel.buildSystemPromptWithProjectContext(basePrompt: baseSystemPrompt)
 
         let configuration = LLMConfiguration(
@@ -1803,17 +1810,26 @@ struct ChatView: View {
         // Regenerate response with edited message
         editingMessageId = nil
         editingMessageText = ""
-        
+
+        // Build system prompt with tool guidance
+        let toolInfos = SystemPrompts.builtInTools + ToolSchemas.allInternal.map { $0.asToolInfo() }
+        let systemPrompt = SystemPrompts.generateComplete(
+            tools: toolInfos,
+            includeArtifactGuidelines: true,
+            includeAgenticBehavior: true,
+            customInstructions: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix
+        )
+
         let configuration = LLMConfiguration(
             provider: container.currentProvider,
             model: selectedModel,
             temperature: 0.7,
             maxTokens: 4096,
-            systemPrompt: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix,
+            systemPrompt: systemPrompt,
             enableChainOfThought: viewModel.showChainOfThought,
             enablePromptEnhancement: enablePromptEnhancement
         )
-        
+
         Task {
             await viewModel.sendMessage(newText, configuration: configuration, replaceAtIndex: messageIndex)
         }
@@ -1887,12 +1903,21 @@ struct ChatView: View {
         
         // Resend the user message - it will replace at the same position
         Task {
+            // Build system prompt with tool guidance
+            let toolInfos = SystemPrompts.builtInTools + ToolSchemas.allInternal.map { $0.asToolInfo() }
+            let systemPrompt = SystemPrompts.generateComplete(
+                tools: toolInfos,
+                includeArtifactGuidelines: true,
+                includeAgenticBehavior: true,
+                customInstructions: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix
+            )
+
             let configuration = LLMConfiguration(
                 provider: container.currentProvider,
                 model: selectedModel,
                 temperature: 0.7,
                 maxTokens: 4096,
-                systemPrompt: systemPromptPrefix.isEmpty ? nil : systemPromptPrefix,
+                systemPrompt: systemPrompt,
                 enableChainOfThought: viewModel.showChainOfThought,
                 enablePromptEnhancement: enablePromptEnhancement
             )

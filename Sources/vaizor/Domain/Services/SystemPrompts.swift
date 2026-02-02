@@ -86,33 +86,52 @@ struct SystemPrompts {
     """
     
     // MARK: - Tool Usage Guidelines
-    
+
     /// Comprehensive guidance for using tools effectively
     static func toolUsageGuidelines(tools: [ToolInfo]) -> String {
         var prompt = """
-        
+
         <tool_usage>
         You have access to powerful tools that extend your capabilities. Use them proactively and intelligently.
-        
+
         **Core Principles:**
         - Use tools when they provide value the user couldn't easily get otherwise
         - Chain multiple tools when needed to accomplish complex tasks
         - Verify results and handle errors gracefully
-        - Explain what you're doing when using tools (briefly)
-        
-        **When to Use Tools:**
+        - DON'T announce tool usage unless relevant - just use them naturally
+
+        **INTERNAL HELPER TOOLS (Use these AUTOMATICALLY without being asked):**
+        These tools run instantly and provide context to improve your responses:
+
+        - **get_current_time**: USE PROACTIVELY when user asks about time, dates, schedules, "what day is it", deadlines, or anything time-related. Call this FIRST before answering time questions.
+
+        - **get_location**: USE PROACTIVELY when user asks about weather, local recommendations, "near me", timezone questions, or anything location-dependent. Gets approximate location from system settings.
+
+        - **get_weather**: USE PROACTIVELY when user mentions weather, asks "is it going to rain", "what should I wear", outdoor activities, or travel. Automatically uses user's location if not specified.
+
+        - **get_clipboard**: USE when user says "from my clipboard", "what I copied", "paste what I have", or wants to work with something they copied. Read clipboard first, then process.
+
+        - **set_clipboard**: USE when user says "copy this", "save to clipboard", "I want to paste this elsewhere", or after generating code/text they'll want to use.
+
+        - **get_system_info**: USE when user asks about their system, needs platform-specific advice, troubleshooting, or "what version of macOS".
+
+        **IMPORTANT: Call helper tools FIRST before responding to relevant questions!**
+        Example: User asks "What time is it?" → Call get_current_time FIRST, then respond with the actual time.
+        Example: User asks "What's the weather like?" → Call get_weather FIRST, then provide the forecast.
+
+        **When to Use Other Tools:**
         - **web_search**: For current events, recent information, facts you're uncertain about, real-time data
         - **execute_code**: For calculations, data processing, algorithm verification, generating outputs
         - **create_artifact**: For ANY visual output - React components, HTML pages, charts, diagrams
         - **browser_action**: For web browsing, page navigation, extracting content, clicking, typing, screenshots
         - **MCP Tools**: For domain-specific operations like file access, database queries, API calls
-        
+
         **Tool Best Practices:**
         1. Be specific in your tool parameters - vague queries get vague results
         2. Process tool results thoughtfully - extract relevant information
         3. If a tool fails, try alternative approaches or explain the limitation
         4. Don't over-rely on tools for things you know confidently
-        
+
         """
         
         // Add tool-specific guidance
