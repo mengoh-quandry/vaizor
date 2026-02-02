@@ -181,6 +181,11 @@ class AppSettings: ObservableObject {
         didSet { objectWillChange.send() }
     }
 
+    /// Ollama context window size (num_ctx) - how many tokens the model can see
+    @AppStorage("ollama_context_window") var ollamaContextWindow: Int = 128000 {
+        didSet { objectWillChange.send() }
+    }
+
     /// MCP servers enabled
     @AppStorage("mcp_enabled") var mcpEnabled: Bool = true {
         didSet { objectWillChange.send() }

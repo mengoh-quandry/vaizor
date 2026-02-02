@@ -212,13 +212,19 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
             BuiltInToolsManager.shared.getToolSchemasOpenAI()
         }
 
+        // Get context window size from settings
+        let contextWindow = await MainActor.run {
+            AppSettings.shared.ollamaContextWindow
+        }
+
         var body: [String: Any] = [
             "model": configuration.model,
             "messages": messages,
             "stream": true,
             "options": [
                 "temperature": configuration.temperature,
-                "num_predict": configuration.maxTokens
+                "num_predict": configuration.maxTokens,
+                "num_ctx": contextWindow
             ]
         ]
 

@@ -569,36 +569,72 @@ struct IntelligenceSettingsView: View {
             // Ollama Settings
             if container.currentProvider == .ollama {
                 SettingsSection(title: "Ollama") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Menu {
-                            ForEach(container.availableModels, id: \.self) { model in
-                                Button {
-                                    defaultOllamaModel = model
-                                } label: {
-                                    HStack {
-                                        Text(model)
-                                        if model == defaultOllamaModel {
-                                            Image(systemName: "checkmark")
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Model selector
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Model")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(settingsTextSecondary)
+
+                            Menu {
+                                ForEach(container.availableModels, id: \.self) { model in
+                                    Button {
+                                        defaultOllamaModel = model
+                                    } label: {
+                                        HStack {
+                                            Text(model)
+                                            if model == defaultOllamaModel {
+                                                Image(systemName: "checkmark")
+                                            }
                                         }
                                     }
                                 }
+                            } label: {
+                                HStack {
+                                    Text(defaultOllamaModel.isEmpty ? "Select a model" : defaultOllamaModel)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(defaultOllamaModel.isEmpty ? settingsTextSecondary : settingsTextPrimary)
+                                    Spacer()
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(settingsTextSecondary)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(settingsDarkSurface)
+                                .cornerRadius(6)
                             }
-                        } label: {
-                            HStack {
-                                Text(defaultOllamaModel.isEmpty ? "Select a model" : defaultOllamaModel)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(defaultOllamaModel.isEmpty ? settingsTextSecondary : settingsTextPrimary)
-                                Spacer()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(settingsTextSecondary)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(settingsDarkSurface)
-                            .cornerRadius(6)
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+
+                        // Context window size
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Context Window")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(settingsTextSecondary)
+                                Spacer()
+                                Text("\(AppSettings.shared.ollamaContextWindow / 1000)K tokens")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(settingsAccent)
+                            }
+
+                            Picker("", selection: Binding(
+                                get: { AppSettings.shared.ollamaContextWindow },
+                                set: { AppSettings.shared.ollamaContextWindow = $0 }
+                            )) {
+                                Text("8K").tag(8192)
+                                Text("16K").tag(16384)
+                                Text("32K").tag(32768)
+                                Text("64K").tag(65536)
+                                Text("128K").tag(131072)
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text("Higher values use more VRAM. Ensure your model supports the selected size.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(settingsTextSecondary)
+                        }
 
                         Text("Ollama runs locally and doesn't require an API key")
                             .font(.system(size: 11))
