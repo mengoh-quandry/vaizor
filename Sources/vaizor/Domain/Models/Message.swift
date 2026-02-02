@@ -1,7 +1,5 @@
 import Foundation
 
-typealias ChatMessage = Message
-
 enum MessageRole: String, Codable {
     case user
     case assistant
@@ -28,6 +26,9 @@ struct Message: Identifiable, Codable {
     let content: String
     let timestamp: Date
     let attachments: [MessageAttachment]?
+    let toolCallId: String? // For tool messages: the ID of the tool call
+    let toolName: String? // For tool messages: the name of the tool that was called
+    let mentionReferences: [MentionReference]? // Files/URLs referenced via @-mentions
 
     init(
         id: UUID = UUID(),
@@ -35,7 +36,10 @@ struct Message: Identifiable, Codable {
         role: MessageRole,
         content: String,
         timestamp: Date = Date(),
-        attachments: [MessageAttachment]? = nil
+        attachments: [MessageAttachment]? = nil,
+        toolCallId: String? = nil,
+        toolName: String? = nil,
+        mentionReferences: [MentionReference]? = nil
     ) {
         self.id = id
         self.conversationId = conversationId
@@ -43,5 +47,33 @@ struct Message: Identifiable, Codable {
         self.content = content
         self.timestamp = timestamp
         self.attachments = attachments
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+        self.mentionReferences = mentionReferences
+    }
+}
+
+/// A lightweight reference to a mention for storage with messages
+struct MentionReference: Identifiable, Codable, Equatable {
+    let id: UUID
+    let type: MentionType
+    let value: String
+    let displayName: String
+    let tokenCount: Int?
+
+    init(from mention: Mention) {
+        self.id = mention.id
+        self.type = mention.type
+        self.value = mention.value
+        self.displayName = mention.displayName
+        self.tokenCount = mention.tokenCount
+    }
+
+    init(id: UUID = UUID(), type: MentionType, value: String, displayName: String, tokenCount: Int? = nil) {
+        self.id = id
+        self.type = type
+        self.value = value
+        self.displayName = displayName
+        self.tokenCount = tokenCount
     }
 }

@@ -203,21 +203,25 @@ extension MCPServerManager {
         guard !server.name.isEmpty else {
             throw MCPImportError.invalidServerConfiguration("Server name cannot be empty")
         }
-        
+
         guard !server.command.isEmpty else {
             throw MCPImportError.invalidServerConfiguration("Command cannot be empty for \(server.name)")
         }
-        
+
         // Normalize path
         let normalizedPath: URL
-        if server.path.path.isEmpty || server.path.path == "/" {
-            normalizedPath = baseFolder
-        } else if server.path.isFileURL {
-            normalizedPath = server.path
+        if let serverPath = server.path {
+            if serverPath.path.isEmpty || serverPath.path == "/" {
+                normalizedPath = baseFolder
+            } else if serverPath.isFileURL {
+                normalizedPath = serverPath
+            } else {
+                normalizedPath = URL(fileURLWithPath: serverPath.path)
+            }
         } else {
-            normalizedPath = URL(fileURLWithPath: server.path.path)
+            normalizedPath = baseFolder
         }
-        
+
         return MCPServer(
             id: server.id,
             name: server.name,
@@ -242,15 +246,17 @@ extension MCPServerManager {
             try await provider.streamMessage(
                 prompt,
                 configuration: config,
-                conversationHistory: []
-            ) { chunk in
-                output += chunk
-                chunkCount += 1
-                
-                if chunkCount % 20 == 0 {
-                    progressHandler("Receiving response... (\(output.count) chars)")
-                }
-            }
+                conversationHistory: [],
+                onChunk: { chunk in
+                    output += chunk
+                    chunkCount += 1
+
+                    if chunkCount % 20 == 0 {
+                        progressHandler("Receiving response... (\(output.count) chars)")
+                    }
+                },
+                onThinkingStatusUpdate: { _ in }
+            )
         } catch {
             progressHandler("Error: \(error.localizedDescription)")
         }

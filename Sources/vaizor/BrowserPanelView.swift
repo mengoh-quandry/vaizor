@@ -46,7 +46,7 @@ struct BrowserPanelView: View {
             Divider()
 
             // Browser view
-            BrowserView(automation: automation)
+            BrowserAutomationView(automation: automation)
                 .frame(minHeight: 400)
 
             Divider()

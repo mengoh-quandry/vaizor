@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+    Non-Sandboxed Entitlements for Vaizor
+    =====================================
+    Use this entitlements file if the app needs to run without sandbox
+    restrictions (e.g., for MCP server functionality, file system access).
+
+    To use: Update ENTITLEMENTS_FILE in build-app.sh to point to this file.
+
+    Note: Non-sandboxed apps can still be notarized but cannot be distributed
+    through the Mac App Store.
+    -->
+
+    <!-- Hardened Runtime (required for notarization) -->
+    <key>com.apple.security.hardened-runtime</key>
+    <true/>
+
+    <!-- Network Access - Required for API calls to LLM providers -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Allow loading unsigned libraries (if needed for plugins) -->
+    <!-- Uncomment if required:
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    -->
+
+    <!-- Allow JIT compilation (if needed for JavaScript execution) -->
+    <!-- Uncomment if required:
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    -->
+
+    <!-- Allow unsigned executable memory (if needed for certain operations) -->
+    <!-- Uncomment if required:
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    -->
+</dict>
+</plist>

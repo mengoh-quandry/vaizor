@@ -3,6 +3,20 @@ import AppKit
 
 extension Notification.Name {
     static let importMCPRequested = Notification.Name("ImportMCPRequested")
+    static let showOnboarding = Notification.Name("ShowOnboarding")
+    static let openSettings = Notification.Name("OpenSettings")
+    static let contextEnhanced = Notification.Name("ContextEnhanced")
+    static let exportConversation = Notification.Name("ExportConversation")
+    static let importConversation = Notification.Name("ImportConversation")
+    static let memoriesExtracted = Notification.Name("MemoriesExtracted")
+    static let newChat = Notification.Name("NewChat")
+    static let openArtifactInPanel = Notification.Name("OpenArtifactInPanel")
+    static let scrollToBottom = Notification.Name("ScrollToBottom")
+    static let scrollToTop = Notification.Name("ScrollToTop")
+    static let selectConversation = Notification.Name("SelectConversation")
+    static let toggleArtifactPanel = Notification.Name("ToggleArtifactPanel")
+    static let toggleChatSidebar = Notification.Name("ToggleChatSidebar")
+    static let toggleSettings = Notification.Name("ToggleSettings")
 }
 
 @main
@@ -723,7 +737,7 @@ struct ImportPreviewView: View {
             self.description = s.description
             self.command = s.command
             self.argsText = s.args.joined(separator: " ")
-            self.path = s.path.path
+            self.path = s.path?.path ?? ""
         }
 
         func toServer() -> MCPServer {

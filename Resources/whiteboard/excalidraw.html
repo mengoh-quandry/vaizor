@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excalidraw</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        #root {
+            width: 100%;
+            height: 100%;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            font-size: 16px;
+            color: #666;
+        }
+
+        .error {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .error h2 {
+            color: #d32f2f;
+            margin-bottom: 12px;
+        }
+
+        .error p {
+            color: #666;
+            max-width: 500px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="loading">Loading Excalidraw...</div>
+    </div>
+
+    <!-- SECURITY: Use bundled libraries only (no CDN) -->
+    <script src="../js/react.min.js"></script>
+    <script src="../js/react-dom.min.js"></script>
+    <script src="../js/excalidraw.min.js"></script>
+
+    <script>
+        const { Excalidraw, exportToBlob, exportToSvg } = ExcalidrawLib;
+
+        // Bridge to Swift
+        const bridge = window.webkit?.messageHandlers?.excalidrawBridge;
+        
+        if (!bridge) {
+            console.error('Bridge not available');
+            document.getElementById('root').innerHTML = '<div class="error"><h2>Bridge Error</h2><p>Unable to communicate with host application</p></div>';
+        }
+
+        // Global state
+        let excalidrawAPI = null;
+        let autoSaveTimer = null;
+
+        // Initialize Excalidraw
+        function initExcalidraw() {
+            const App = () => {
+                const [excalidrawData, setExcalidrawData] = React.useState({
+                    elements: [],
+                    appState: { viewBackgroundColor: "#ffffff" },
+                    files: null
+                });
+
+                return React.createElement(Excalidraw, {
+                    ref: (api) => {
+                        if (api) {
+                            window.excalidrawAPI = api;
+                            excalidrawAPI = api;
+                            
+                            // Notify Swift that we're ready
+                            if (bridge) {
+                                bridge.postMessage({
+                                    type: 'ready'
+                                });
+                            }
+                        }
+                    },
+                    initialData: excalidrawData,
+                    onChange: (elements, appState, files) => {
+                        // Debounced auto-save
+                        if (autoSaveTimer) {
+                            clearTimeout(autoSaveTimer);
+                        }
+                        
+                        autoSaveTimer = setTimeout(() => {
+                            const data = {
+                                elements: elements,
+                                appState: {
+                                    viewBackgroundColor: appState.viewBackgroundColor,
+                                    gridSize: appState.gridSize
+                                },
+                                files: files
+                            };
+
+                            if (bridge) {
+                                bridge.postMessage({
+                                    type: 'changed',
+                                    content: JSON.stringify(data)
+                                });
+                            }
+                        }, 1000); // Auto-save after 1 second of inactivity
+                    },
+                    UIOptions: {
+                        canvasActions: {
+                            loadScene: false,
+                            export: false,
+                            saveAsImage: false
+                        }
+                    }
+                });
+            };
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(React.createElement(App));
+        }
+
+        // API Methods for Swift to call
+        window.excalidrawAPI = {
+            updateScene: function(data) {
+                if (excalidrawAPI) {
+                    excalidrawAPI.updateScene(data);
+                }
+            },
+            
+            getSceneElements: function() {
+                if (excalidrawAPI) {
+                    return excalidrawAPI.getSceneElements();
+                }
+                return [];
+            },
+            
+            getAppState: function() {
+                if (excalidrawAPI) {
+                    return excalidrawAPI.getAppState();
+                }
+                return {};
+            },
+            
+            getFiles: function() {
+                if (excalidrawAPI) {
+                    return excalidrawAPI.getFiles();
+                }
+                return null;
+            },
+            
+            scrollToContent: function() {
+                if (excalidrawAPI) {
+                    excalidrawAPI.scrollToContent();
+                }
+            },
+            
+            exportToBlob: async function(options = {}) {
+                if (!excalidrawAPI) return null;
+                
+                const elements = excalidrawAPI.getSceneElements();
+                const appState = excalidrawAPI.getAppState();
+                const files = excalidrawAPI.getFiles();
+                
+                return await exportToBlob({
+                    elements,
+                    appState,
+                    files,
+                    ...options
+                });
+            },
+            
+            exportToSvg: async function(options = {}) {
+                if (!excalidrawAPI) return null;
+                
+                const elements = excalidrawAPI.getSceneElements();
+                const appState = excalidrawAPI.getAppState();
+                const files = excalidrawAPI.getFiles();
+                
+                return await exportToSvg({
+                    elements,
+                    appState,
+                    files,
+                    ...options
+                });
+            }
+        };
+
+        // Error handling
+        window.onerror = function(message, source, lineno, colno, error) {
+            console.error('Error:', message, error);
+            if (bridge) {
+                bridge.postMessage({
+                    type: 'error',
+                    message: message
+                });
+            }
+        };
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initExcalidraw);
+        } else {
+            initExcalidraw();
+        }
+
+        // Test exports
+        console.log('Excalidraw loaded:', typeof Excalidraw);
+        console.log('exportToBlob loaded:', typeof exportToBlob);
+        console.log('exportToSvg loaded:', typeof exportToSvg);
+    </script>
+</body>
+</html>

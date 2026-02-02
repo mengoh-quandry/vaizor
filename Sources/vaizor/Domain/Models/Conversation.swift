@@ -7,6 +7,13 @@ struct Conversation: Identifiable, Codable {
     let createdAt: Date
     var lastUsedAt: Date
     var messageCount: Int
+    var isArchived: Bool
+    var selectedProvider: LLMProvider?
+    var selectedModel: String?
+    var folderId: UUID?
+    var projectId: UUID?
+    var tags: [String]
+    var isFavorite: Bool
 
     init(
         id: UUID = UUID(),
@@ -14,7 +21,14 @@ struct Conversation: Identifiable, Codable {
         summary: String = "",
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
-        messageCount: Int = 0
+        messageCount: Int = 0,
+        isArchived: Bool = false,
+        selectedProvider: LLMProvider? = nil,
+        selectedModel: String? = nil,
+        folderId: UUID? = nil,
+        projectId: UUID? = nil,
+        tags: [String] = [],
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -22,5 +36,12 @@ struct Conversation: Identifiable, Codable {
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.messageCount = messageCount
+        self.isArchived = isArchived
+        self.selectedProvider = selectedProvider
+        self.selectedModel = selectedModel
+        self.folderId = folderId
+        self.projectId = projectId
+        self.tags = tags
+        self.isFavorite = isFavorite
     }
 }

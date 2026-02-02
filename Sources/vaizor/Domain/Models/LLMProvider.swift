@@ -50,6 +50,7 @@ struct LLMConfiguration {
     let maxTokens: Int
     let systemPrompt: String?
     let enableChainOfThought: Bool
+    let enablePromptEnhancement: Bool
 
     init(
         provider: LLMProvider,
@@ -57,7 +58,8 @@ struct LLMConfiguration {
         temperature: Double = 0.7,
         maxTokens: Int = 4096,
         systemPrompt: String? = nil,
-        enableChainOfThought: Bool = false
+        enableChainOfThought: Bool = false,
+        enablePromptEnhancement: Bool = false
     ) {
         self.provider = provider
         self.model = model
@@ -65,5 +67,6 @@ struct LLMConfiguration {
         self.maxTokens = maxTokens
         self.systemPrompt = systemPrompt
         self.enableChainOfThought = enableChainOfThought
+        self.enablePromptEnhancement = enablePromptEnhancement
     }
 }

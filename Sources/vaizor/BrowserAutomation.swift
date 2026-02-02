@@ -307,7 +307,7 @@ extension String {
     }
 }
 
-struct BrowserView: NSViewRepresentable {
+struct BrowserAutomationView: NSViewRepresentable {
     @ObservedObject var automation: BrowserAutomation
     func makeNSView(context: Context) -> WKWebView { automation.webView }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
