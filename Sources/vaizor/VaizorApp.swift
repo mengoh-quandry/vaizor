@@ -12,6 +12,7 @@ struct VaizorApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(container)
                 .background(Color.clear)
         }
         .windowStyle(.titleBar)
