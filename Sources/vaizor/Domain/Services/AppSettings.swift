@@ -1,12 +1,6 @@
 import Foundation
 import SwiftUI
 
-/// Sidebar position preference
-enum SidebarPosition: String, CaseIterable {
-    case left
-    case right
-}
-
 /// Comprehensive app settings manager with Chorus-level feature parity
 @MainActor
 class AppSettings: ObservableObject {
