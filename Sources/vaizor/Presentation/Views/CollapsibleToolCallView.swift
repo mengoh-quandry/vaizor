@@ -9,8 +9,14 @@ struct CollapsibleToolCallView: View {
     let status: ToolCallStatus
     let isError: Bool
 
+    // Retry support
+    let toolCallId: UUID?
+    let isRetryable: Bool
+    let onRetry: ((UUID, String, String) -> Void)?
+
     @State private var isExpanded: Bool
     @State private var isHovered = false
+    @State private var isRetrying = false
     @Environment(\.colorScheme) private var colorScheme
 
     private var colors: AdaptiveColors {
@@ -18,18 +24,21 @@ struct CollapsibleToolCallView: View {
     }
 
     /// Initialize from a LiveToolCall (streaming)
-    init(toolCall: LiveToolCall) {
+    init(toolCall: LiveToolCall, onRetry: ((UUID, String, String) -> Void)? = nil) {
         self.name = toolCall.name
         self.input = toolCall.input
         self.output = toolCall.output
         self.status = toolCall.status
         self.isError = toolCall.status == .error
+        self.toolCallId = toolCall.id
+        self.isRetryable = toolCall.status == .error
+        self.onRetry = onRetry
         // Auto-expand errors
         self._isExpanded = State(initialValue: toolCall.status == .error)
     }
 
     /// Initialize from a ToolRun (persisted)
-    init(toolRun: ToolRun) {
+    init(toolRun: ToolRun, onRetry: ((UUID, String, String) -> Void)? = nil) {
         self.name = toolRun.toolName
         // Parse input from JSON if available
         if let inputJson = toolRun.inputJson,
@@ -57,17 +66,31 @@ struct CollapsibleToolCallView: View {
         self.output = toolRun.outputJson
         self.status = toolRun.isError ? .error : .success
         self.isError = toolRun.isError
+        self.toolCallId = toolRun.id
+        self.isRetryable = toolRun.isError
+        self.onRetry = onRetry
         // Auto-expand errors
         self._isExpanded = State(initialValue: toolRun.isError)
     }
 
     /// Direct initialization
-    init(name: String, input: String, output: String?, status: ToolCallStatus) {
+    init(
+        name: String,
+        input: String,
+        output: String?,
+        status: ToolCallStatus,
+        toolCallId: UUID? = nil,
+        isRetryable: Bool = false,
+        onRetry: ((UUID, String, String) -> Void)? = nil
+    ) {
         self.name = name
         self.input = input
         self.output = output
         self.status = status
         self.isError = status == .error
+        self.toolCallId = toolCallId
+        self.isRetryable = isRetryable && status == .error
+        self.onRetry = onRetry
         self._isExpanded = State(initialValue: status == .error)
     }
 
@@ -183,6 +206,14 @@ struct CollapsibleToolCallView: View {
 
                         codeSection(content: output, isOutput: true)
                     }
+
+                    // Retry button for failed tool calls
+                    if isError && isRetryable && onRetry != nil {
+                        Divider()
+                            .padding(.horizontal, 12)
+
+                        retryButton
+                    }
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -245,6 +276,44 @@ struct CollapsibleToolCallView: View {
             .frame(maxHeight: isOutput ? 200 : 100)
         }
     }
+
+    @ViewBuilder
+    private var retryButton: some View {
+        HStack {
+            Spacer()
+
+            Button {
+                guard let id = toolCallId, let retry = onRetry else { return }
+                isRetrying = true
+                retry(id, name, input)
+            } label: {
+                HStack(spacing: 6) {
+                    if isRetrying {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    Text(isRetrying ? "Retrying..." : "Retry")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(isRetrying ? colors.textMuted : colors.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(colors.accent.opacity(0.1))
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isRetrying)
+
+            Spacer()
+        }
+        .padding(.vertical, 10)
+    }
 }
 
 /// Pulse animation modifier for running status
@@ -283,12 +352,27 @@ private struct PulseAnimation: ViewModifier {
             status: .success
         )
 
-        // Failed tool call
+        // Failed tool call with retry button
         CollapsibleToolCallView(
             name: "execute_code",
             input: "print(undefined_variable)",
             output: "NameError: name 'undefined_variable' is not defined",
-            status: .error
+            status: .error,
+            toolCallId: UUID(),
+            isRetryable: true,
+            onRetry: { id, name, input in
+                print("Retrying tool: \(name)")
+            }
+        )
+
+        // Failed tool call without retry (non-retryable error)
+        CollapsibleToolCallView(
+            name: "unknown_tool",
+            input: "{}",
+            output: "Tool 'unknown_tool' not found",
+            status: .error,
+            toolCallId: UUID(),
+            isRetryable: false
         )
     }
     .padding()

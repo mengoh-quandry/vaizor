@@ -35,6 +35,7 @@ class DependencyContainer: ObservableObject {
     @Published var mcpManager = MCPServerManager()
     @Published var projectManager = ProjectManager()
     @Published var browserAutomation = BrowserAutomation()
+    @Published var agentService = AgentService()
     /// Published error state for surfacing provider errors to the UI
     @Published var lastProviderError: Error?
 

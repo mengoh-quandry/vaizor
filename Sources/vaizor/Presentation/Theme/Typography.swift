@@ -1,7 +1,13 @@
 import SwiftUI
 
 /// Centralized typography system for consistent text styling across Vaizor
+/// Following Apple Human Interface Guidelines for macOS
 enum VaizorTypography {
+    // MARK: - Hero Display (for onboarding, empty states)
+    static let displayHero = Font.system(size: 48, weight: .bold)
+    static let displayHeroLight = Font.system(size: 48, weight: .light)
+    static let displayXLarge = Font.system(size: 42, weight: .bold)
+
     // MARK: - Display
     static let displayLarge = Font.system(size: 32, weight: .bold, design: .default)
     static let displayMedium = Font.system(size: 28, weight: .semibold, design: .default)
@@ -25,12 +31,23 @@ enum VaizorTypography {
     static let code = Font.system(size: 13, weight: .regular, design: .monospaced)
     static let codeSmall = Font.system(size: 12, weight: .regular, design: .monospaced)
 
-    // MARK: - Rounded variants (for headers/titles)
-    static let displayLargeRounded = Font.system(size: 32, weight: .bold, design: .rounded)
-    static let displayMediumRounded = Font.system(size: 28, weight: .semibold, design: .rounded)
-    static let h1Rounded = Font.system(size: 24, weight: .semibold, design: .rounded)
-    static let h2Rounded = Font.system(size: 20, weight: .bold, design: .rounded)
-    static let h3Rounded = Font.system(size: 17, weight: .semibold, design: .rounded)
+    // MARK: - Rounded variants (DEPRECATED - not native to macOS)
+    // These are kept for backwards compatibility but should be migrated to standard fonts
+    @available(*, deprecated, message: "Use standard fonts instead - rounded fonts are not native to macOS")
+    static let displayLargeRounded = Font.system(size: 32, weight: .bold, design: .default)
+    @available(*, deprecated, message: "Use standard fonts instead - rounded fonts are not native to macOS")
+    static let displayMediumRounded = Font.system(size: 28, weight: .semibold, design: .default)
+    @available(*, deprecated, message: "Use standard fonts instead - rounded fonts are not native to macOS")
+    static let h1Rounded = Font.system(size: 24, weight: .semibold, design: .default)
+    @available(*, deprecated, message: "Use standard fonts instead - rounded fonts are not native to macOS")
+    static let h2Rounded = Font.system(size: 20, weight: .bold, design: .default)
+    @available(*, deprecated, message: "Use standard fonts instead - rounded fonts are not native to macOS")
+    static let h3Rounded = Font.system(size: 17, weight: .semibold, design: .default)
+
+    // MARK: - Button Text
+    static let buttonSmall = Font.system(size: 12, weight: .medium)
+    static let buttonMedium = Font.system(size: 13, weight: .semibold)
+    static let buttonLarge = Font.system(size: 15, weight: .semibold)
 }
 
 // MARK: - Line Height Constants

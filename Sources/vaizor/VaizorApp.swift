@@ -2,40 +2,6 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-// MARK: - Visual Effect View for macOS Vibrancy (Xcode-style sidebar)
-
-/// NSVisualEffectView wrapper for true macOS vibrancy/translucency
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-    let state: NSVisualEffectView.State
-
-    init(
-        material: NSVisualEffectView.Material = .sidebar,
-        blendingMode: NSVisualEffectView.BlendingMode = .behindWindow,
-        state: NSVisualEffectView.State = .followsWindowActiveState
-    ) {
-        self.material = material
-        self.blendingMode = blendingMode
-        self.state = state
-    }
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = state
-        view.isEmphasized = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = state
-    }
-}
-
 extension Notification.Name {
     static let toggleSettings = Notification.Name("toggleSettings")
     static let openSettings = Notification.Name("openSettings")
@@ -442,7 +408,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(isPresented: $showOnboarding)
-                .frame(minWidth: 800, minHeight: 600)
+                .frame(width: 900, height: 750)
                 .interactiveDismissDisabled()
         }
         .sheet(isPresented: $showProjectIngestion) {
@@ -533,23 +499,18 @@ struct ContentView: View {
 
     // Sidebar with traffic lights space at top - Tahoe liquid glass style
     private var sidebarWithTrafficLights: some View {
-        ZStack {
-            // True macOS vibrancy using NSVisualEffectView (like Xcode's sidebar)
-            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
-
-            VStack(spacing: 0) {
-                // Traffic lights area (macOS window controls)
-                HStack {
-                    Spacer()
-                }
-                .frame(height: 52)
-                .background(
-                    WindowDragArea()
-                )
-
-                // Actual sidebar content
-                tabbedSidebar
+        VStack(spacing: 0) {
+            // Traffic lights area (macOS window controls)
+            HStack {
+                Spacer()
             }
+            .frame(height: 52)
+            .background(
+                WindowDragArea()
+            )
+
+            // Actual sidebar content
+            tabbedSidebar
         }
     }
 
@@ -664,9 +625,12 @@ struct ContentView: View {
 
                 // Recents section
                 sidebarRecents
-            } else {
+            } else if selectedTab == .code {
                 // Code tab content
                 sidebarCodeContent
+            } else if selectedTab == .agent {
+                // Agent tab content
+                sidebarAgentContent
             }
 
             Spacer()
@@ -674,7 +638,18 @@ struct ContentView: View {
             // User profile at bottom
             sidebarUserProfile
         }
-        // No opaque background - let material show through
+        .background(
+            // More opaque material for better readability
+            Group {
+                if #available(macOS 26.0, *) {
+                    Color.clear
+                        .background(.regularMaterial)
+                } else {
+                    Color.clear
+                        .background(.regularMaterial)
+                }
+            }
+        )
         .sheet(isPresented: $showHelpSheet) {
             HelpSheetView()
         }
@@ -731,6 +706,17 @@ struct ContentView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    private var sidebarAgentContent: some View {
+        ScrollView {
+            VStack(spacing: VaizorSpacing.md) {
+                AgentStatusView(agentService: container.agentService)
+                AgentNotificationsPanel(agentService: container.agentService)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
     }
 
     private func codeActionButton(icon: String, title: String, subtitle: String) -> some View {
@@ -1475,7 +1461,8 @@ struct ContentView: View {
             // Chat content - each instance is independent
             if let conversation = conversation {
                 ChatView(
-                    conversationId: conversation.id
+                    conversationId: conversation.id,
+                    conversationManager: conversationManager
                 )
                 .id("main-\(conversation.id)")
                 .environmentObject(container)
@@ -1534,7 +1521,8 @@ struct ContentView: View {
             // Split chat content - independent instance with separate pipes
             if let conversation = conversation {
                 ChatView(
-                    conversationId: conversation.id
+                    conversationId: conversation.id,
+                    conversationManager: conversationManager
                 )
                 .id("split-\(conversation.id)")
                 .environmentObject(container)
@@ -1613,6 +1601,7 @@ struct ContentView: View {
 enum SidebarTab: String, CaseIterable {
     case chat = "Chat"
     case code = "Code"
+    case agent = "Agent"
 }
 
 enum SidebarNavItem: String, CaseIterable, Identifiable {

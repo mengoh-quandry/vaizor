@@ -57,12 +57,14 @@ struct MCPServerConfig: Codable, Hashable {
 }
 
 /// Runtime environment for the extension
-enum ExtensionRuntime: String, Codable, Hashable {
+enum ExtensionRuntime: String, Codable, Hashable, CaseIterable {
     case node = "node"
     case python = "python"
     case binary = "binary"
     case deno = "deno"
     case bun = "bun"
+    case go = "go"
+    case rust = "rust"
 
     var displayName: String {
         switch self {
@@ -71,6 +73,8 @@ enum ExtensionRuntime: String, Codable, Hashable {
         case .binary: return "Native Binary"
         case .deno: return "Deno"
         case .bun: return "Bun"
+        case .go: return "Go"
+        case .rust: return "Rust"
         }
     }
 
@@ -81,6 +85,8 @@ enum ExtensionRuntime: String, Codable, Hashable {
         case .deno: return nil
         case .bun: return "bun install"
         case .binary: return nil
+        case .go: return "go mod download"
+        case .rust: return "cargo build --release"
         }
     }
 
@@ -91,6 +97,32 @@ enum ExtensionRuntime: String, Codable, Hashable {
         case .binary: return ""
         case .deno: return "deno --version"
         case .bun: return "bun --version"
+        case .go: return "go version"
+        case .rust: return "rustc --version"
+        }
+    }
+
+    var runCommand: String {
+        switch self {
+        case .node: return "node"
+        case .python: return "python3"
+        case .binary: return ""
+        case .deno: return "deno run"
+        case .bun: return "bun run"
+        case .go: return "go run"
+        case .rust: return "cargo run --release"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .node: return ".js"
+        case .python: return ".py"
+        case .binary: return ""
+        case .deno: return ".ts"
+        case .bun: return ".ts"
+        case .go: return ".go"
+        case .rust: return ".rs"
         }
     }
 }

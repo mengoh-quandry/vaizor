@@ -1,0 +1,358 @@
+import Foundation
+import SwiftUI
+import Combine
+
+// MARK: - Agent Service
+// Central service that coordinates all agent subsystems and provides
+// a unified interface for the rest of the app to interact with the agent.
+
+@MainActor
+class AgentService: ObservableObject {
+    // MARK: - Published State
+    @Published private(set) var isInitialized = false
+    @Published private(set) var agentName: String?
+    @Published private(set) var developmentStage: DevelopmentStage = .nascent
+    @Published private(set) var currentMood: EmotionalTone = .neutral
+    @Published private(set) var activeAppendageCount: Int = 0
+    @Published private(set) var notifications: [AgentNotification] = []
+
+    // MARK: - Observation State
+    @Published private(set) var isObserving: Bool = false
+    @Published private(set) var currentSystemState: SystemState = SystemState()
+    @Published private(set) var recentEvents: [SystemEvent] = []
+    @Published private(set) var pendingProposals: [ActionProposal] = []
+
+    // MARK: - Avatar
+    @Published var avatarImageData: Data?
+    @Published var avatarSystemIcon: String = "brain.head.profile"
+
+    // MARK: - Subsystems (using singletons where appropriate)
+    private let personalFileManager = PersonalFileManager.shared
+    private var appendageCoordinator: AppendageCoordinator?
+    private var skillLoader: SkillLoader?
+    private var guardrailsCoordinator: GuardrailsCoordinator?
+
+    // MARK: - OS Integration Subsystems
+    private let systemObserver = SystemObserver.shared
+    private let proposalManager = ProposalManager.shared
+    private let actionExecutor = ActionExecutor.shared
+    private let activityTracker = ActivityTracker.shared
+
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Initialization
+
+    init() {
+        Task {
+            await initialize()
+        }
+    }
+
+    private func initialize() async {
+        do {
+            // Initialize personal file manager (loads or creates agent identity)
+            try await personalFileManager.initialize()
+
+            // Initialize appendage coordinator
+            appendageCoordinator = AppendageCoordinator(personalFileManager: personalFileManager)
+
+            // Initialize skill loader
+            skillLoader = SkillLoader()
+            try await skillLoader?.loadAllSkills()
+
+            // Initialize guardrails
+            guardrailsCoordinator = GuardrailsCoordinator()
+
+            // Set up observation bindings
+            setupObservationBindings()
+
+            // Load initial state
+            await refreshState()
+
+            isInitialized = true
+            AppLogger.shared.log("Agent service initialized", level: .info)
+
+        } catch {
+            AppLogger.shared.log("Failed to initialize agent service: \(error)", level: .error)
+        }
+    }
+
+    private func setupObservationBindings() {
+        // Bind system observer state
+        systemObserver.$isObserving
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$isObserving)
+
+        systemObserver.$currentState
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$currentSystemState)
+
+        systemObserver.$recentEvents
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$recentEvents)
+
+        // Bind proposal manager state
+        proposalManager.$pendingProposals
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$pendingProposals)
+
+        // Subscribe to system events for decision making
+        systemObserver.onEvent { [weak self] event in
+            Task { @MainActor in
+                await self?.handleSystemEvent(event)
+            }
+        }
+    }
+
+    private func handleSystemEvent(_ event: SystemEvent) async {
+        // Record significant events as memories
+        switch event.type {
+        case .newMessageReceived:
+            if let sender = event.data["sender"], let content = event.data["content"] {
+                await recordInteraction(
+                    summary: "Received message from \(sender): \(content.prefix(50))...",
+                    outcome: .successful
+                )
+            }
+
+        case .browserTabChanged:
+            if let url = event.data["url"], let title = event.data["title"] {
+                // Learn about user's browsing interests
+                await learnFact("User visited: \(title) (\(url))", source: "browser observation")
+            }
+
+        case .downloadCompleted:
+            if let fileName = event.data["fileName"] {
+                // Could propose file organization
+                AppLogger.shared.log("Agent noticed download: \(fileName)", level: .debug)
+            }
+
+        default:
+            break
+        }
+    }
+
+    private func refreshState() async {
+        // Get current identity
+        let identity = await personalFileManager.getIdentity()
+        agentName = identity.name
+        developmentStage = DevelopmentStage.stage(for: Date().timeIntervalSince(identity.birthTimestamp))
+
+        // Get current state
+        let state = await personalFileManager.getState()
+        currentMood = state.currentMood
+
+        // Get active appendages
+        if let coordinator = appendageCoordinator {
+            let appendages = await coordinator.getActiveAppendages()
+            activeAppendageCount = appendages.count
+        }
+
+        // Get pending notifications
+        notifications = await personalFileManager.getPendingNotifications()
+    }
+
+    // MARK: - Public API
+
+    /// Record an interaction episode for memory
+    func recordInteraction(summary: String, outcome: EpisodeOutcome, lessonsLearned: [String] = []) async {
+        let episode = Episode(
+            summary: summary,
+            emotionalTone: currentMood,
+            outcome: outcome,
+            lessonsLearned: lessonsLearned
+        )
+
+        await personalFileManager.recordEpisode(episode)
+        await refreshState()
+    }
+
+    /// Update the agent's current mood based on interaction
+    func updateMood(valence: Float, arousal: Float, emotion: String?) async {
+        let mood = EmotionalTone(valence: valence, arousal: arousal, dominantEmotion: emotion)
+        await personalFileManager.updateMood(mood)
+        currentMood = mood
+    }
+
+    /// Learn a new fact from an interaction
+    func learnFact(_ fact: String, source: String = "conversation") async {
+        let learnedFact = LearnedFact(fact: fact, source: source)
+        await personalFileManager.addLearnedFact(learnedFact)
+    }
+
+    /// Record a user preference
+    func recordPreference(key: String, value: String) async {
+        await personalFileManager.recordPreference(key: key, value: value)
+    }
+
+    /// Spawn a background appendage for a task
+    func spawnAppendage(for task: AppendageTask) async throws -> UUID {
+        guard let coordinator = appendageCoordinator else {
+            throw AgentError.notInitialized
+        }
+
+        let id = try await coordinator.spawnAppendage(for: task)
+        await refreshState()
+        return id
+    }
+
+    /// Check if an action is permitted by guardrails
+    func evaluateAction(_ action: ProposedAction) async -> ActionEvaluationResult {
+        guard let guardrails = guardrailsCoordinator else {
+            return .allowed
+        }
+        return await guardrails.evaluateAction(action)
+    }
+
+    /// Find a skill that matches the input
+    func findMatchingSkill(for input: String) async -> SkillLoader.LoadedSkill? {
+        return await skillLoader?.findMatchingSkill(for: input)
+    }
+
+    /// Set the agent's name
+    func setName(_ name: String, origin: String? = nil) async {
+        await personalFileManager.setName(name, origin: origin)
+        agentName = name
+
+        // Record milestone
+        let milestone = Milestone(
+            description: "Named '\(name)' by partner",
+            emotionalSignificance: 0.9,
+            category: .namedByUser
+        )
+        await personalFileManager.addMilestone(milestone)
+    }
+
+    /// Acknowledge a notification
+    func acknowledgeNotification(_ id: UUID) async {
+        await personalFileManager.acknowledgeNotification(id)
+        notifications.removeAll { $0.id == id }
+    }
+
+    /// Get the agent's birthday
+    func getBirthday() async -> Date {
+        return await personalFileManager.getBirthday()
+    }
+
+    /// Get total interaction count
+    func getTotalInteractions() async -> Int {
+        return await personalFileManager.getTotalInteractions()
+    }
+
+    /// Get relationship info with partner
+    func getPartnerRelationship() async -> Relationship? {
+        return await personalFileManager.getRelationship(partnerId: "primary")
+    }
+
+    // MARK: - System Observation
+
+    /// Start ambient system observation
+    func startObserving() {
+        guard isInitialized else {
+            AppLogger.shared.log("Cannot start observing - agent not initialized", level: .warning)
+            return
+        }
+        systemObserver.startObserving()
+        AppLogger.shared.log("Agent started observing system", level: .info)
+    }
+
+    /// Stop ambient system observation
+    func stopObserving() {
+        systemObserver.stopObserving()
+        AppLogger.shared.log("Agent stopped observing system", level: .info)
+    }
+
+    /// Get current browser context
+    func getCurrentBrowserContext() -> String? {
+        guard let tab = currentSystemState.currentBrowserTab else { return nil }
+        var context = "Currently viewing: \(tab.title)\nURL: \(tab.url)"
+        if let content = currentSystemState.browserContent {
+            context += "\n\nPage content preview:\n\(content.prefix(500))..."
+        }
+        return context
+    }
+
+    // MARK: - Action Proposals
+
+    /// Submit a proposal for user approval
+    func proposeAction(_ action: AgentAction, reasoning: String, urgency: ProposalUrgency = .routine) {
+        let proposal = ActionProposal(
+            action: action,
+            reasoning: reasoning,
+            urgency: urgency
+        )
+        proposalManager.submitProposal(proposal)
+    }
+
+    /// Approve a pending proposal
+    func approveProposal(_ proposalId: UUID) async {
+        guard let proposal = pendingProposals.first(where: { $0.id == proposalId }) else { return }
+
+        proposalManager.resolveProposal(proposalId, result: .approved)
+
+        // Execute the action
+        let result = await actionExecutor.execute(proposal.action)
+
+        // Record the interaction
+        await recordInteraction(
+            summary: "Executed: \(proposal.action.description)",
+            outcome: result.success ? .successful : .challenging,
+            lessonsLearned: result.success ? [] : ["Action failed: \(result.message ?? "unknown error")"]
+        )
+    }
+
+    /// Reject a pending proposal
+    func rejectProposal(_ proposalId: UUID) {
+        proposalManager.resolveProposal(proposalId, result: .rejected)
+    }
+
+    /// Execute an action directly (for low-risk automatic actions)
+    func executeAction(_ action: AgentAction) async -> ActionExecutor.ExecutionResult {
+        // Check risk level
+        if action.defaultRiskLevel.requiresApproval {
+            // Should go through proposal system instead
+            proposeAction(action, reasoning: "Automatic action requires approval")
+            return .failure(action, error: "Action requires approval")
+        }
+
+        return await actionExecutor.execute(action)
+    }
+
+    // MARK: - Convenience Accessors
+
+    var activityLevel: Float {
+        activityTracker.activityLevel
+    }
+
+    var isUserActive: Bool {
+        activityTracker.isUserActive
+    }
+
+    var frontmostApp: String {
+        currentSystemState.frontmostApp
+    }
+}
+
+// MARK: - Supporting Types
+
+enum AgentError: LocalizedError {
+    case notInitialized
+    case appendageCapacityExceeded
+    case skillNotFound
+    case permissionDenied(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notInitialized:
+            return "Agent service not initialized"
+        case .appendageCapacityExceeded:
+            return "Maximum concurrent appendages reached"
+        case .skillNotFound:
+            return "No matching skill found"
+        case .permissionDenied(let reason):
+            return "Permission denied: \(reason)"
+        }
+    }
+}
+
+// Note: ProposedAction and ActionEvaluationResult are defined in GuardrailsSystem.swift

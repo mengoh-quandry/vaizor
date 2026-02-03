@@ -10,6 +10,7 @@ struct ChatInputView: View {
 
     let isStreaming: Bool
     let container: DependencyContainer
+    @ObservedObject var conversationManager: ConversationManager
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -25,7 +26,8 @@ struct ChatInputView: View {
                     searchText: String(messageText.dropFirst()),
                     onSelect: { command in
                         handleSlashCommand(command)
-                    }
+                    },
+                    conversationManager: conversationManager
                 )
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
@@ -60,7 +62,7 @@ struct ChatInputView: View {
             }
             .padding(16)
             .background(Material.thin)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusLg + 2, style: .continuous))
             .overlay(inputBorder)
             .overlay(dropHighlight)
             .shadow(color: inputShadowColor, radius: 8, x: 0, y: 3)
@@ -98,9 +100,8 @@ struct ChatInputView: View {
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(pendingAttachments.isEmpty ? .secondary : Color.accentColor)
             }
-            .buttonStyle(.plain)
+            .vaizorIconButtonStyle(size: .medium, isActive: !pendingAttachments.isEmpty)
             .help("Attach file (drag & drop or Cmd+V to paste images)")
 
             Button {
@@ -108,9 +109,8 @@ struct ChatInputView: View {
             } label: {
                 Image(systemName: "photo")
                     .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .vaizorIconButtonStyle(size: .medium)
             .help("Add image")
 
             Button {
@@ -118,9 +118,8 @@ struct ChatInputView: View {
             } label: {
                 Image(systemName: "rectangle.on.rectangle.angled")
                     .font(.system(size: 20))
-                    .foregroundStyle(showWhiteboard ? .blue : .secondary)
             }
-            .buttonStyle(.plain)
+            .vaizorIconButtonStyle(size: .medium, isActive: showWhiteboard, activeColor: .blue)
             .help("Open whiteboard")
 
             mcpServersIndicator
@@ -277,17 +276,18 @@ struct ChatInputView: View {
         }
     }
     
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    // Native macOS border - solid color, not gradient
     private var inputBorder: some View {
-        RoundedRectangle(cornerRadius: 14)
-            .strokeBorder(
-                LinearGradient(
-                    colors: (!messageText.isEmpty || isStreaming) ?
-                        [Color.blue.opacity(0.5), Color.purple.opacity(0.5)] :
-                        [Color.gray.opacity(0.15)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: (!messageText.isEmpty || isStreaming) ? 1.5 : 0.75
+        RoundedRectangle(cornerRadius: VaizorSpacing.radiusLg + 2, style: .continuous)
+            .stroke(
+                (!messageText.isEmpty || isStreaming) ? colors.accent : colors.border,
+                lineWidth: (!messageText.isEmpty || isStreaming) ? 1.5 : 1
             )
     }
     

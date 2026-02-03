@@ -24,13 +24,25 @@ struct LiveToolCall: Identifiable, Equatable {
     var output: String?
     var status: ToolCallStatus
     let startTime: Date
+    var retryCount: Int
+    var isRetryable: Bool
+    var arguments: [String: Any]?
 
-    init(id: UUID = UUID(), name: String, input: String, status: ToolCallStatus = .running) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        input: String,
+        status: ToolCallStatus = .running,
+        arguments: [String: Any]? = nil
+    ) {
         self.id = id
         self.name = name
         self.input = input
         self.status = status
         self.startTime = Date()
+        self.retryCount = 0
+        self.isRetryable = false
+        self.arguments = arguments
     }
 
     /// Truncated input for collapsed display
@@ -40,6 +52,13 @@ struct LiveToolCall: Identifiable, Equatable {
             return String(cleaned.prefix(47)) + "..."
         }
         return cleaned
+    }
+
+    static func == (lhs: LiveToolCall, rhs: LiveToolCall) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.status == rhs.status &&
+        lhs.retryCount == rhs.retryCount
     }
 }
 
@@ -99,16 +118,30 @@ class ChatViewModel: ObservableObject {
     private let maxHistoryMessages = 12
     private var parallelExecutor: ParallelModelExecutor?
 
-    // Streaming buffer optimization
+    // Streaming buffer optimization with adaptive batching
     private var streamingBuffer: String = ""
     private var bufferUpdateTask: Task<Void, Never>?
-    private let bufferUpdateInterval: TimeInterval = 0.05 // 50ms
+    private let bufferUpdateInterval: TimeInterval = 0.05 // 50ms base interval
+    private var lastBufferFlush: Date = .distantPast
+    private var chunksSinceLastFlush: Int = 0
+
+    // Streaming metrics for adaptive buffering
+    private var streamingStartTime: Date?
+    private var totalChunksReceived: Int = 0
+    private var totalBytesReceived: Int = 0
+
+    // Retry support
+    private var mcpManager: MCPServerManager?
+    private let toolErrorHandler = ToolCallErrorHandler.shared
 
     // Pagination cursor
     private var oldestMessageCursor: (Date, UUID)? = nil
 
     // Observer for context enhancement notifications
     private var contextEnhancedObserver: NSObjectProtocol?
+
+    // Agent service for recording interactions
+    private weak var agentService: AgentService?
 
     init(conversationId: UUID, conversationRepository: ConversationRepository, container: DependencyContainer? = nil) {
         self.conversationId = conversationId
@@ -117,6 +150,7 @@ class ChatViewModel: ObservableObject {
         // Parallel executor will be set when container is available
         if let container = container {
             self.parallelExecutor = ParallelModelExecutor(container: container)
+            self.agentService = container.agentService
         }
 
         // Load initial messages chunk
@@ -286,6 +320,11 @@ class ChatViewModel: ObservableObject {
         lastResponseAnalysis = nil
         contextWasEnhanced = false
         contextEnhancementDetails = nil
+        // Reset streaming metrics
+        streamingStartTime = nil
+        totalChunksReceived = 0
+        totalBytesReceived = 0
+        chunksSinceLastFlush = 0
     }
 
     /// Edit a user message and regenerate the AI response from that point
@@ -479,6 +518,12 @@ class ChatViewModel: ObservableObject {
         error = nil
         thinkingStatus = "Analyzing request..."
 
+        // Reset streaming metrics
+        streamingStartTime = Date()
+        totalChunksReceived = 0
+        totalBytesReceived = 0
+        chunksSinceLastFlush = 0
+
         // Capture redaction map for use in the streaming task
         let capturedRedactionMap = activeRedactionMap
 
@@ -512,20 +557,30 @@ class ChatViewModel: ObservableObject {
                         onChunk: { [weak self] chunk in
                             guard !Task.isCancelled else { return }
 
-                            // Buffer chunks for batched UI updates
+                            // Buffer chunks for batched UI updates with adaptive interval
                             Task { @MainActor [weak self] in
                                 guard let self = self else { return }
                                 self.streamingBuffer += chunk
+                                self.totalChunksReceived += 1
+                                self.chunksSinceLastFlush += 1
 
                                 // Schedule buffer flush if not already scheduled
                                 if self.bufferUpdateTask == nil {
+                                    let interval = self.adaptiveBufferInterval()
                                     self.bufferUpdateTask = Task {
-                                        try? await Task.sleep(nanoseconds: UInt64(self.bufferUpdateInterval * 1_000_000_000))
+                                        try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
                                         guard !Task.isCancelled else { return }
                                         await MainActor.run {
                                             self.flushStreamingBuffer()
                                         }
                                     }
+                                }
+
+                                // Force flush if buffer is getting large (> 2KB)
+                                if self.streamingBuffer.utf8.count > 2048 {
+                                    self.bufferUpdateTask?.cancel()
+                                    self.bufferUpdateTask = nil
+                                    self.flushStreamingBuffer()
                                 }
                             }
                         },
@@ -546,12 +601,26 @@ class ChatViewModel: ObservableObject {
                                 guard let self = self else { return }
                                 switch event {
                                 case .started(let id, let name, let input):
-                                    let toolCall = LiveToolCall(id: id, name: name, input: input, status: .running)
+                                    // Parse arguments from input JSON for retry support
+                                    var arguments: [String: Any]?
+                                    if let data = input.data(using: .utf8),
+                                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                        arguments = json
+                                    }
+                                    let toolCall = LiveToolCall(
+                                        id: id,
+                                        name: name,
+                                        input: input,
+                                        status: .running,
+                                        arguments: arguments
+                                    )
                                     self.activeToolCalls.append(toolCall)
                                 case .completed(let id, let output, let isError):
                                     if let index = self.activeToolCalls.firstIndex(where: { $0.id == id }) {
                                         self.activeToolCalls[index].output = output
                                         self.activeToolCalls[index].status = isError ? .error : .success
+                                        // Mark as retryable if it failed (transient errors can be retried)
+                                        self.activeToolCalls[index].isRetryable = isError
                                     }
                                 }
                             }
@@ -634,6 +703,18 @@ class ChatViewModel: ObservableObject {
                     )
                 }
 
+                // Record interaction for agent memory
+                if let agent = self.agentService, let userMsg = messages.last(where: { $0.role == .user }) {
+                    let summary = "User asked about: \(userMsg.content.prefix(100))..."
+                    await agent.recordInteraction(
+                        summary: summary,
+                        outcome: .successful,
+                        lessonsLearned: []
+                    )
+                    // Update mood positively on successful interaction
+                    await agent.updateMood(valence: 0.1, arousal: 0.0, emotion: nil)
+                }
+
                 // Clear replace index and redaction state after use
                 targetReplaceIndex = nil
                 activeRedactionMap = [:]
@@ -651,6 +732,17 @@ class ChatViewModel: ObservableObject {
                 streamTask = nil
                 activeToolCalls = []
                 activeRedactionMap = [:]
+
+                // Record failed interaction for agent learning
+                if let agent = self.agentService {
+                    await agent.recordInteraction(
+                        summary: "Failed interaction: \(error.localizedDescription)",
+                        outcome: .challenging,
+                        lessonsLearned: ["Error occurred: \(error.localizedDescription)"]
+                    )
+                    // Update mood negatively on failure
+                    await agent.updateMood(valence: -0.1, arousal: 0.1, emotion: "concern")
+                }
             }
         }
         // Note: Don't await the task - it runs independently and updates published properties
@@ -660,8 +752,121 @@ class ChatViewModel: ObservableObject {
     private func flushStreamingBuffer() {
         guard !streamingBuffer.isEmpty else { return }
         currentStreamingText += streamingBuffer
+        totalBytesReceived += streamingBuffer.utf8.count
         streamingBuffer = ""
         bufferUpdateTask = nil
+        lastBufferFlush = Date()
+        chunksSinceLastFlush = 0
+    }
+
+    /// Calculate adaptive buffer interval based on chunk arrival rate
+    private func adaptiveBufferInterval() -> TimeInterval {
+        guard let start = streamingStartTime else { return bufferUpdateInterval }
+
+        let elapsed = Date().timeIntervalSince(start)
+        guard elapsed > 0.5 else { return bufferUpdateInterval }
+
+        // Calculate chunks per second
+        let chunksPerSecond = Double(totalChunksReceived) / elapsed
+
+        // Adapt interval: faster chunks = longer batching window (up to 100ms)
+        // Slower chunks = shorter batching window (down to 16ms for responsive feel)
+        if chunksPerSecond > 50 {
+            return 0.1 // High throughput: batch more aggressively
+        } else if chunksPerSecond > 20 {
+            return 0.05 // Medium throughput: standard batching
+        } else {
+            return 0.016 // Low throughput: responsive updates (~60fps)
+        }
+    }
+
+    // MARK: - MCP Manager Support
+
+    /// Set the MCP manager for retry support
+    func setMCPManager(_ manager: MCPServerManager) {
+        self.mcpManager = manager
+    }
+
+    // MARK: - Tool Call Retry
+
+    /// Retry a failed tool call
+    func retryToolCall(toolCallId: UUID, toolName: String, inputJson: String) async {
+        guard let mcpManager = mcpManager else {
+            AppLogger.shared.log("Cannot retry tool call: MCP manager not set", level: .error)
+            return
+        }
+
+        // Parse arguments from input JSON
+        var arguments: [String: Any] = [:]
+        if let data = inputJson.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            arguments = json
+        }
+
+        // Find the tool call in activeToolCalls
+        guard let index = activeToolCalls.firstIndex(where: { $0.id == toolCallId }) else {
+            // Tool call not in active list - create a new one
+            let toolCall = LiveToolCall(
+                id: toolCallId,
+                name: toolName,
+                input: inputJson,
+                status: .running,
+                arguments: arguments
+            )
+            activeToolCalls.append(toolCall)
+            await executeRetry(index: activeToolCalls.count - 1, mcpManager: mcpManager)
+            return
+        }
+
+        // Update status to running
+        activeToolCalls[index].status = .running
+        activeToolCalls[index].retryCount += 1
+        activeToolCalls[index].output = nil
+
+        await executeRetry(index: index, mcpManager: mcpManager)
+    }
+
+    private func executeRetry(index: Int, mcpManager: MCPServerManager) async {
+        let toolCall = activeToolCalls[index]
+        let arguments = toolCall.arguments ?? [:]
+
+        AppLogger.shared.log(
+            "Retrying tool call: \(toolCall.name) (attempt \(toolCall.retryCount + 1))",
+            level: .info
+        )
+
+        // Execute with retry logic
+        let result = await toolErrorHandler.executeWithRetry(
+            toolName: toolCall.name,
+            arguments: arguments,
+            mcpManager: mcpManager,
+            conversationId: conversationId,
+            onAttempt: { [weak self] attempt, delay in
+                Task { @MainActor [weak self] in
+                    guard let self = self, index < self.activeToolCalls.count else { return }
+                    if let delay = delay {
+                        self.thinkingStatus = "Retrying \(toolCall.name) in \(String(format: "%.1f", delay))s..."
+                    } else {
+                        self.thinkingStatus = "Executing \(toolCall.name)..."
+                    }
+                }
+            }
+        )
+
+        // Update the tool call with result
+        guard index < activeToolCalls.count else { return }
+
+        let resultText = result.content.compactMap { $0.text }.joined(separator: "\n")
+        activeToolCalls[index].output = resultText
+        activeToolCalls[index].status = result.isError ? .error : .success
+        activeToolCalls[index].isRetryable = result.isError
+
+        thinkingStatus = result.isError ? "Tool failed" : "Tool completed"
+
+        AppLogger.shared.log(
+            "Tool retry completed: \(toolCall.name) - \(result.isError ? "failed" : "success")",
+            level: result.isError ? .warning : .info
+        )
     }
 
     /// Extract potential memories from a conversation exchange and save to project

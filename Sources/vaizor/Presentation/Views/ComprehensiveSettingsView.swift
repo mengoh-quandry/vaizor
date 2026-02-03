@@ -107,7 +107,7 @@ struct ComprehensiveSettingsView: View {
 
             let attrStart = attributed.index(attributed.startIndex, offsetByCharacters: startOffset)
             let attrEnd = attributed.index(attributed.startIndex, offsetByCharacters: endOffset)
-            attributed[attrStart..<attrEnd].backgroundColor = Color(hex: "00976d").opacity(0.3)
+            attributed[attrStart..<attrEnd].backgroundColor = ThemeColors.accent.opacity(0.3)
             attributed[attrStart..<attrEnd].foregroundColor = .white
 
             searchStartIndex = range.upperBound
@@ -165,7 +165,7 @@ struct ComprehensiveSettingsView: View {
             HStack(spacing: VaizorSpacing.xs) {
                 Image(systemName: "magnifyingglass")
                     .font(VaizorTypography.label)
-                    .foregroundStyle(searchText.isEmpty ? Color(hex: "606060") : Color(hex: "00976d"))
+                    .foregroundStyle(searchText.isEmpty ? ThemeColors.textSecondary : ThemeColors.accent)
 
                 TextField("Search settings...", text: $searchText)
                     .textFieldStyle(.plain)
@@ -432,13 +432,13 @@ struct SettingsCategoryButton: View {
     }
 }
 
-// MARK: - Dark Theme Colors (shared)
-private let settingsDarkBase = Color(hex: "1c1d1f")
-private let settingsDarkSurface = Color(hex: "232426")
-private let settingsDarkBorder = Color(hex: "2d2e30")
-private let settingsTextPrimary = Color.white
-private let settingsTextSecondary = Color(hex: "808080")
-private let settingsAccent = Color(hex: "00976d")
+// MARK: - Dark Theme Colors (shared) - Using ThemeColors
+private let settingsDarkBase = ThemeColors.darkBase
+private let settingsDarkSurface = ThemeColors.darkSurface
+private let settingsDarkBorder = ThemeColors.darkBorder
+private let settingsTextPrimary = ThemeColors.textPrimary
+private let settingsTextSecondary = ThemeColors.textSecondary
+private let settingsAccent = ThemeColors.accent
 
 // MARK: - General Settings
 struct GeneralSettingsView: View {
@@ -1027,7 +1027,7 @@ struct RuntimeStatusBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(isAvailable ? Color(hex: "00976d") : Color(hex: "808080").opacity(0.5))
+                .fill(isAvailable ? ThemeColors.accent : ThemeColors.textSecondary.opacity(0.5))
                 .frame(width: 6, height: 6)
 
             Text(runtime.displayName)
@@ -1468,19 +1468,19 @@ struct AddRedactionPatternView: View {
     @State private var testText = ""
     @State private var testResult = ""
 
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
-    private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
+    private let textPrimary = ThemeColors.textPrimary
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
                 Text("Add Custom Pattern")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(VaizorTypography.h3)
                     .foregroundStyle(textPrimary)
                 Spacer()
                 Button {
@@ -2440,28 +2440,38 @@ enum APIKeyValidationError: LocalizedError {
 }
 
 struct DarkButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(settingsTextPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(configuration.isPressed ? settingsDarkBorder : settingsDarkSurface)
-            .cornerRadius(6)
+            .font(VaizorTypography.label)
+            .foregroundStyle(ThemeColors.textPrimary)
+            .padding(.horizontal, VaizorSpacing.sm)
+            .padding(.vertical, VaizorSpacing.xs)
+            .background(configuration.isPressed ? ThemeColors.darkBorder : ThemeColors.darkSurface)
+            .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(settingsDarkBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous)
+                    .stroke(ThemeColors.darkBorder, lineWidth: 1)
             )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
 struct DarkAccentButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .font(VaizorTypography.label)
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(configuration.isPressed ? settingsAccent.opacity(0.8) : settingsAccent)
-            .cornerRadius(6)
+            .padding(.horizontal, VaizorSpacing.sm)
+            .padding(.vertical, VaizorSpacing.xs)
+            .background(configuration.isPressed ? ThemeColors.accent.opacity(0.8) : ThemeColors.accent)
+            .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -2474,18 +2484,18 @@ struct SettingsToggleRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(settingsTextPrimary)
+                    .font(VaizorTypography.label)
+                    .foregroundStyle(ThemeColors.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(settingsTextSecondary)
+                    .font(VaizorTypography.caption)
+                    .foregroundStyle(ThemeColors.textSecondary)
             }
             Spacer()
             Toggle("", isOn: $isOn)
                 .toggleStyle(.switch)
-                .tint(settingsAccent)
+                .tint(ThemeColors.accent)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, VaizorSpacing.xs)
     }
 }
 
@@ -2498,21 +2508,21 @@ struct SystemPromptTemplateButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            VStack(spacing: VaizorSpacing.xxs + 2) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(settingsAccent)
+                    .font(VaizorTypography.body)
+                    .foregroundStyle(ThemeColors.accent)
                 Text(title)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(settingsTextPrimary)
+                    .font(VaizorTypography.caption.weight(.medium))
+                    .foregroundStyle(ThemeColors.textPrimary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(settingsDarkSurface)
-            .cornerRadius(8)
+            .padding(.vertical, VaizorSpacing.xs + 2)
+            .background(ThemeColors.darkSurface)
+            .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusMd, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(settingsDarkBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusMd, style: .continuous)
+                    .stroke(ThemeColors.darkBorder, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -2525,12 +2535,12 @@ struct SystemPromptEditorSheet: View {
     @State private var editingPrompt: String = ""
     @FocusState private var isEditorFocused: Bool
 
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
-    private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
+    private let textPrimary = ThemeColors.textPrimary
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2538,7 +2548,7 @@ struct SystemPromptEditorSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Custom Instructions")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(VaizorTypography.h3)
                         .foregroundStyle(textPrimary)
                     Text("Define how the AI should behave in conversations")
                         .font(.system(size: 12))

@@ -78,6 +78,43 @@ extension VaizorSpacing {
 
     /// Message bubble corner radius
     static let bubbleRadius: CGFloat = radiusXl
+
+    // MARK: - Modal/Window Sizes
+
+    /// Standardized modal sizes for consistent window dimensions
+    enum ModalSize {
+        case small      // 400×300 - Simple dialogs
+        case medium     // 550×450 - Settings panels
+        case large      // 700×550 - Complex settings, project settings
+        case xlarge     // 900×700 - Onboarding, major features
+        case browser    // 1000×700 - Browser panels
+        case custom(width: CGFloat, height: CGFloat)
+
+        var size: CGSize {
+            switch self {
+            case .small:
+                return CGSize(width: 400, height: 300)
+            case .medium:
+                return CGSize(width: 550, height: 450)
+            case .large:
+                return CGSize(width: 700, height: 550)
+            case .xlarge:
+                return CGSize(width: 900, height: 700)
+            case .browser:
+                return CGSize(width: 1000, height: 700)
+            case .custom(let width, let height):
+                return CGSize(width: width, height: height)
+            }
+        }
+
+        var width: CGFloat { size.width }
+        var height: CGFloat { size.height }
+    }
+
+    // MARK: - Minimum Touch Target
+
+    /// Minimum touch/click target size per accessibility guidelines (44pt)
+    static let minTouchTarget: CGFloat = 44
 }
 
 // MARK: - View Extensions for Spacing

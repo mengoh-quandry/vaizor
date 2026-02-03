@@ -692,30 +692,22 @@ enum AdvancedSkills {
 }
 
 // MARK: - Extended Tool Categories
+// These are semantic aliases for existing ToolCategory enum cases
+// They provide more specific naming for different tool domains
 
 extension ToolSchema.ToolCategory {
-    static let filesystem = ToolSchema.ToolCategory(rawValue: "Filesystem")!
-    static let network = ToolSchema.ToolCategory(rawValue: "Network")!
-    static let database = ToolSchema.ToolCategory(rawValue: "Database")!
-    static let security = ToolSchema.ToolCategory(rawValue: "Security")!
-    static let system = ToolSchema.ToolCategory(rawValue: "System")!
-    static let code = ToolSchema.ToolCategory(rawValue: "Code")!
-}
+    /// Filesystem operations (maps to .code category for organization)
+    static var filesystem: ToolSchema.ToolCategory { .code }
 
-// Make category initializable from raw value
-extension ToolSchema.ToolCategory {
-    init?(rawValue: String) {
-        switch rawValue {
-        case "Core": self = .core
-        case "Web": self = .web
-        case "Code": self = .code
-        case "Artifacts": self = .artifacts
-        case "Filesystem": self = .code  // Map to existing category
-        case "Network": self = .web      // Map to existing category
-        case "Database": self = .code    // Map to existing category
-        case "Security": self = .core    // Map to existing category
-        case "System": self = .core      // Map to existing category
-        default: return nil
-        }
-    }
+    /// Network operations (maps to .web category)
+    static var network: ToolSchema.ToolCategory { .web }
+
+    /// Database operations (maps to .code category)
+    static var database: ToolSchema.ToolCategory { .code }
+
+    /// Security operations (maps to .core category)
+    static var security: ToolSchema.ToolCategory { .core }
+
+    /// System operations (maps to .core category)
+    static var system: ToolSchema.ToolCategory { .core }
 }

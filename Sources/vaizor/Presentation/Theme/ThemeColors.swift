@@ -4,6 +4,50 @@ import SwiftUI
 // Following Apple Human Interface Guidelines for macOS 26+
 // Emphasizes: Liquid glass effects, continuous corners, refined materials, semantic colors
 
+// MARK: - Provider Colors (AI Model Providers)
+
+/// Standardized colors for AI provider branding
+enum ProviderColors {
+    static let claude = Color(hex: "d4a017")      // Amber/Gold
+    static let anthropic = Color(hex: "d4a017")   // Same as Claude
+    static let openai = Color(hex: "10a37f")      // Green
+    static let gemini = Color(hex: "5a9bd5")      // Blue
+    static let ollama = Color(hex: "9c7bea")      // Purple
+
+    /// Get color for a provider by name
+    static func color(for provider: String) -> Color {
+        switch provider.lowercased() {
+        case "claude", "anthropic":
+            return claude
+        case "openai", "gpt", "chatgpt":
+            return openai
+        case "gemini", "google":
+            return gemini
+        case "ollama", "local":
+            return ollama
+        default:
+            return Color.gray
+        }
+    }
+}
+
+// MARK: - Code Syntax Colors
+
+/// Standardized colors for code syntax highlighting
+enum CodeSyntaxColors {
+    static let command = Color(hex: "61afef")     // Blue - commands/functions
+    static let string = Color(hex: "98c379")      // Green - string literals
+    static let variable = Color(hex: "e06c75")    // Red - variables
+    static let comment = Color(hex: "7f848e")     // Gray - comments
+    static let keyword = Color(hex: "c678dd")     // Purple - keywords
+    static let flag = Color(hex: "d19a66")        // Orange - flags/options
+    static let `operator` = Color(hex: "56b6c2")  // Cyan - operators
+    static let number = Color(hex: "d19a66")      // Orange - numbers
+    static let type = Color(hex: "e5c07b")        // Yellow - types
+    static let property = Color(hex: "e06c75")    // Red - properties
+    static let constant = Color(hex: "56b6c2")    // Cyan - constants
+}
+
 // MARK: - Adaptive Theme Colors
 
 /// Adaptive theme colors that respond to system color scheme
@@ -937,3 +981,393 @@ extension View {
 }
 
 // Note: Color.init(hex:) extension is defined in VaizorApp.swift
+
+// MARK: - Shadow Elevation System
+
+/// Native macOS shadow elevation levels
+enum ShadowElevation {
+    case none
+    case subtle     // Buttons, small elements
+    case medium     // Cards, dropdowns
+    case high       // Floating panels, modals
+
+    /// Layered shadow configuration for native macOS feel
+    struct ShadowConfig {
+        let tightRadius: CGFloat
+        let tightY: CGFloat
+        let tightOpacity: Double
+        let diffuseRadius: CGFloat
+        let diffuseY: CGFloat
+        let diffuseOpacity: Double
+    }
+
+    func config(for colorScheme: ColorScheme) -> ShadowConfig {
+        let isDark = colorScheme == .dark
+        switch self {
+        case .none:
+            return ShadowConfig(tightRadius: 0, tightY: 0, tightOpacity: 0,
+                              diffuseRadius: 0, diffuseY: 0, diffuseOpacity: 0)
+        case .subtle:
+            return ShadowConfig(
+                tightRadius: isDark ? 1 : 2,
+                tightY: isDark ? 1 : 1,
+                tightOpacity: isDark ? 0.25 : 0.08,
+                diffuseRadius: isDark ? 3 : 4,
+                diffuseY: isDark ? 2 : 2,
+                diffuseOpacity: isDark ? 0.15 : 0.04
+            )
+        case .medium:
+            return ShadowConfig(
+                tightRadius: isDark ? 2 : 3,
+                tightY: isDark ? 1 : 2,
+                tightOpacity: isDark ? 0.30 : 0.10,
+                diffuseRadius: isDark ? 8 : 12,
+                diffuseY: isDark ? 4 : 6,
+                diffuseOpacity: isDark ? 0.20 : 0.06
+            )
+        case .high:
+            return ShadowConfig(
+                tightRadius: isDark ? 3 : 4,
+                tightY: isDark ? 2 : 3,
+                tightOpacity: isDark ? 0.35 : 0.12,
+                diffuseRadius: isDark ? 16 : 24,
+                diffuseY: isDark ? 8 : 12,
+                diffuseOpacity: isDark ? 0.25 : 0.10
+            )
+        }
+    }
+}
+
+/// View modifier for native layered shadows
+struct NativeShadowModifier: ViewModifier {
+    let elevation: ShadowElevation
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let config = elevation.config(for: colorScheme)
+        content
+            // Tight shadow (close to element)
+            .shadow(
+                color: Color.black.opacity(config.tightOpacity),
+                radius: config.tightRadius,
+                x: 0,
+                y: config.tightY
+            )
+            // Diffuse shadow (ambient)
+            .shadow(
+                color: Color.black.opacity(config.diffuseOpacity),
+                radius: config.diffuseRadius,
+                x: 0,
+                y: config.diffuseY
+            )
+    }
+}
+
+extension View {
+    /// Apply native macOS layered shadow
+    func nativeShadow(elevation: ShadowElevation) -> some View {
+        modifier(NativeShadowModifier(elevation: elevation))
+    }
+}
+
+// MARK: - Native Panel Modifier
+
+/// Panel styles following macOS material guidelines
+struct NativePanelModifier: ViewModifier {
+    enum PanelStyle {
+        case floating   // .regularMaterial, high shadow (popovers, modals)
+        case dropdown   // .thinMaterial, medium shadow (menus, dropdowns)
+        case sidebar    // .thinMaterial, no shadow (sidebars)
+        case toolbar    // .ultraThinMaterial, no shadow (toolbars)
+        case card       // Solid surface, subtle shadow (cards)
+    }
+
+    let style: PanelStyle
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    func body(content: Content) -> some View {
+        switch style {
+        case .floating:
+            content
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 0.5)
+                )
+                .nativeShadow(elevation: .high)
+
+        case .dropdown:
+            content
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 0.5)
+                )
+                .nativeShadow(elevation: .medium)
+
+        case .sidebar:
+            content
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+        case .toolbar:
+            content
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+        case .card:
+            content
+                .background(colors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 1)
+                )
+                .nativeShadow(elevation: .subtle)
+        }
+    }
+}
+
+extension View {
+    /// Apply native macOS panel styling
+    func nativePanel(_ style: NativePanelModifier.PanelStyle, cornerRadius: CGFloat = VaizorSpacing.radiusLg) -> some View {
+        modifier(NativePanelModifier(style: style, cornerRadius: cornerRadius))
+    }
+}
+
+// MARK: - Native Focus Ring Modifier
+
+/// Focus ring following macOS accessibility guidelines
+struct NativeFocusRingModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let isCircular: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, isCircular: Bool = false) {
+        self.isFocused = isFocused
+        self.cornerRadius = cornerRadius
+        self.isCircular = isCircular
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(focusOverlay)
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            if isCircular {
+                Circle()
+                    .stroke(colors.accent, lineWidth: 2)
+                    .padding(-4) // Offset outward from element
+                    .shadow(color: colors.accent.opacity(0.4), radius: 4, x: 0, y: 0)
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
+                    .stroke(colors.accent, lineWidth: 2)
+                    .padding(-4)
+                    .shadow(color: colors.accent.opacity(0.4), radius: 4, x: 0, y: 0)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Apply native macOS focus ring
+    func nativeFocusRing(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd) -> some View {
+        modifier(NativeFocusRingModifier(isFocused: isFocused, cornerRadius: cornerRadius))
+    }
+
+    /// Apply circular focus ring (for icon buttons)
+    func nativeCircularFocusRing(isFocused: Bool) -> some View {
+        modifier(NativeFocusRingModifier(isFocused: isFocused, isCircular: true))
+    }
+}
+
+// MARK: - Native Hover Modifier
+
+/// Hover state modifier following macOS interaction patterns
+struct NativeHoverModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let includeScale: Bool
+    let isCircular: Bool
+
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(cornerRadius: CGFloat = VaizorSpacing.radiusSm, includeScale: Bool = false, isCircular: Bool = false) {
+        self.cornerRadius = cornerRadius
+        self.includeScale = includeScale
+        self.isCircular = isCircular
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background(backgroundShape)
+            .scaleEffect(scaleAmount)
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+
+    @ViewBuilder
+    private var backgroundShape: some View {
+        if isCircular {
+            Circle()
+                .fill(isHovered ? colors.hoverBackground : Color.clear)
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(isHovered ? colors.hoverBackground : Color.clear)
+        }
+    }
+
+    private var scaleAmount: CGFloat {
+        guard includeScale, !reduceMotion else { return 1.0 }
+        return isHovered ? 1.02 : 1.0
+    }
+}
+
+extension View {
+    /// Apply native hover background effect
+    func nativeHover(cornerRadius: CGFloat = VaizorSpacing.radiusSm, includeScale: Bool = false) -> some View {
+        modifier(NativeHoverModifier(cornerRadius: cornerRadius, includeScale: includeScale))
+    }
+
+    /// Apply circular hover effect (for icons)
+    func nativeCircularHover(includeScale: Bool = false) -> some View {
+        modifier(NativeHoverModifier(cornerRadius: 0, includeScale: includeScale, isCircular: true))
+    }
+}
+
+// MARK: - Native Input Field Modifier
+
+/// Input field styling following macOS text field guidelines
+struct NativeInputFieldModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let hasError: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, hasError: Bool = false) {
+        self.isFocused = isFocused
+        self.cornerRadius = cornerRadius
+        self.hasError = hasError
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(VaizorSpacing.sm)
+            .background(colors.inputBackground)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(borderOverlay)
+            .shadow(
+                color: focusShadowColor,
+                radius: isFocused ? 4 : 0,
+                x: 0,
+                y: 0
+            )
+            .animation(.easeInOut(duration: 0.15), value: isFocused)
+    }
+
+    @ViewBuilder
+    private var borderOverlay: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .stroke(borderColor, lineWidth: isFocused || hasError ? 2 : 1)
+    }
+
+    private var borderColor: Color {
+        if hasError {
+            return colors.error
+        }
+        if isFocused {
+            return colors.accent
+        }
+        return colors.inputBorder
+    }
+
+    private var focusShadowColor: Color {
+        if hasError {
+            return colors.error.opacity(0.25)
+        }
+        if isFocused {
+            return colors.accent.opacity(0.25)
+        }
+        return .clear
+    }
+}
+
+extension View {
+    /// Apply native macOS input field styling
+    func nativeInputField(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, hasError: Bool = false) -> some View {
+        modifier(NativeInputFieldModifier(isFocused: isFocused, cornerRadius: cornerRadius, hasError: hasError))
+    }
+}
+
+// MARK: - Native List Row Modifier
+
+/// List row styling for native selection/hover states
+struct NativeListRowModifier: ViewModifier {
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, VaizorSpacing.sm)
+            .padding(.vertical, VaizorSpacing.xs)
+            .background(backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isHovered)
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isSelected)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return colors.selectedBackground
+        }
+        if isHovered {
+            return colors.hoverBackground
+        }
+        return .clear
+    }
+}
+
+extension View {
+    /// Apply native list row styling
+    func nativeListRow(isSelected: Bool = false, cornerRadius: CGFloat = VaizorSpacing.radiusSm) -> some View {
+        modifier(NativeListRowModifier(isSelected: isSelected, cornerRadius: cornerRadius))
+    }
+}

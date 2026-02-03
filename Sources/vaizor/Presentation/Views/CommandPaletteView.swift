@@ -262,7 +262,7 @@ struct PaletteCommandRow: View {
             HStack(spacing: 12) {
                 Image(systemName: command.icon)
                     .font(.system(size: 16))
-                    .foregroundStyle(isSelected ? .white : Color(hex: "00976d"))
+                    .foregroundStyle(isSelected ? .white : ThemeColors.accent)
                     .frame(width: 24)
                 
                 VStack(alignment: .leading, spacing: 2) {
@@ -281,7 +281,7 @@ struct PaletteCommandRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
-                isSelected ? Color(hex: "00976d") : Color.clear
+                isSelected ? ThemeColors.accent : Color.clear
             )
             .cornerRadius(6)
         }

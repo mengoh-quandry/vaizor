@@ -121,23 +121,17 @@ struct CollapsibleMessageContent: View {
     let conversationId: UUID
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // Adaptive colors helper
     private var colors: AdaptiveColors {
         AdaptiveColors(colorScheme: colorScheme)
     }
 
-    private let collapseThreshold = 2000 // Characters for text content only
+    private let collapseThreshold = 2000 // Characters
     @State private var isExpanded = false
 
-    // Calculate if we should collapse based on text content only (excluding code blocks)
-    private var textContentLength: Int {
-        extractTextContent(from: content).count
-    }
-
     private var shouldCollapse: Bool {
-        textContentLength > collapseThreshold
+        content.count > collapseThreshold
     }
 
     // Text color adapts to role and color scheme
@@ -151,88 +145,8 @@ struct CollapsibleMessageContent: View {
         }
     }
 
-    // Extract text content excluding code blocks for character counting
-    private func extractTextContent(from markdown: String) -> String {
-        var text = markdown
-        // Remove fenced code blocks (```...```)
-        let codeBlockPattern = #"```[\s\S]*?```"#
-        if let regex = try? NSRegularExpression(pattern: codeBlockPattern, options: []) {
-            text = regex.stringByReplacingMatches(
-                in: text,
-                options: [],
-                range: NSRange(text.startIndex..., in: text),
-                withTemplate: ""
-            )
-        }
-        // Remove inline code (`...`)
-        let inlineCodePattern = #"`[^`]+`"#
-        if let regex = try? NSRegularExpression(pattern: inlineCodePattern, options: []) {
-            text = regex.stringByReplacingMatches(
-                in: text,
-                options: [],
-                range: NSRange(text.startIndex..., in: text),
-                withTemplate: ""
-            )
-        }
-        return text
-    }
-
-    // Smart truncation that preserves code blocks and truncates at paragraph boundaries
     private var previewContent: String {
-        // Strategy: Keep all code blocks, truncate text around them
-        var result = ""
-        var textCharCount = 0
-        var index = content.startIndex
-
-        while index < content.endIndex && textCharCount < collapseThreshold {
-            // Check if we're at the start of a code block
-            let remaining = String(content[index...])
-            if remaining.hasPrefix("```") {
-                // Find the end of this code block
-                if let endRange = remaining.range(of: "```", range: remaining.index(remaining.startIndex, offsetBy: 3)..<remaining.endIndex) {
-                    let codeBlockEnd = content.index(index, offsetBy: remaining.distance(from: remaining.startIndex, to: endRange.upperBound))
-                    result += String(content[index..<codeBlockEnd])
-                    index = codeBlockEnd
-                    continue
-                }
-            }
-
-            // Regular character - count towards text limit
-            result.append(content[index])
-            textCharCount += 1
-            index = content.index(after: index)
-        }
-
-        // If we stopped mid-content, try to end at a natural break
-        if index < content.endIndex {
-            // Look for the last paragraph break, sentence end, or word boundary
-            if let paragraphRange = result.range(of: "\n\n", options: .backwards) {
-                let distance = result.distance(from: result.startIndex, to: paragraphRange.lowerBound)
-                if distance > collapseThreshold / 2 {
-                    result = String(result[..<paragraphRange.upperBound])
-                }
-            } else if let lastNewline = result.lastIndex(of: Character("\n")) {
-                let distance = result.distance(from: result.startIndex, to: lastNewline)
-                if distance > collapseThreshold * 3 / 4 {
-                    result = String(result[...lastNewline])
-                }
-            } else if let lastPeriod = result.lastIndex(of: Character(".")) {
-                let distance = result.distance(from: result.startIndex, to: lastPeriod)
-                if distance > collapseThreshold * 3 / 4 {
-                    result = String(result[...lastPeriod])
-                }
-            }
-        }
-
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    // Calculate remaining content info for "Show more" button
-    private var remainingInfo: (charCount: Int, hasMore: Bool) {
-        let previewLen = previewContent.count
-        let totalLen = content.count
-        let remaining = totalLen - previewLen
-        return (remaining, remaining > 0)
+        String(content.prefix(collapseThreshold))
     }
 
     // Detect if message contains artifact creation indicator
@@ -245,7 +159,7 @@ struct CollapsibleMessageContent: View {
            let title = json["artifact_title"] as? String {
             return (title, type)
         }
-
+        
         // Look for common artifact creation phrases
         let artifactPhrases = [
             ("dashboard", "react"),
@@ -257,7 +171,7 @@ struct CollapsibleMessageContent: View {
             ("presentation", "slides"),
             ("3D", "three")
         ]
-
+        
         let lower = content.lowercased()
         if lower.contains("created") || lower.contains("here's your") || lower.contains("i've built") || lower.contains("here is the") {
             for (keyword, type) in artifactPhrases {
@@ -267,13 +181,8 @@ struct CollapsibleMessageContent: View {
                 }
             }
         }
-
+        
         return nil
-    }
-
-    // Animation for smooth expand/collapse
-    private var expandAnimation: Animation {
-        reduceMotion ? .linear(duration: 0) : .spring(response: 0.35, dampingFraction: 0.8)
     }
 
     var body: some View {
@@ -282,98 +191,10 @@ struct CollapsibleMessageContent: View {
             if let artifactInfo = detectedArtifactInfo, role == .assistant {
                 ArtifactIndicatorCard(title: artifactInfo.title, type: artifactInfo.type)
             }
-
+            
             // Visualizations are now shown as artifact cards in CodeBlockView, not inline previews
             if shouldCollapse && !isExpanded {
-                // Collapsed state - show preview with truncation indicator
-                VStack(alignment: .leading, spacing: 0) {
-                    Markdown(previewContent)
-                        .markdownTextStyle(\.text) {
-                            ForegroundColor(textColor)
-                            FontSize(15)
-                        }
-                        .markdownTextStyle(\.code) {
-                            FontFamilyVariant(.monospaced)
-                            FontSize(14)
-                            ForegroundColor(colors.accent)
-                            BackgroundColor(colors.accentBackground)
-                        }
-                        .markdownBlockStyle(\.codeBlock) { configuration in
-                            CodeBlockView(
-                                language: configuration.language,
-                                codeContent: configuration.content,
-                                codeLabel: configuration.label,
-                                messageId: messageId,
-                                conversationId: conversationId
-                            )
-                        }
-                        .markdownBlockStyle(\.blockquote) { configuration in
-                            configuration.label
-                                .padding(.leading, 12)
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(colors.info.opacity(0.5))
-                                        .frame(width: 4)
-                                }
-                        }
-                        .markdownBlockStyle(\.table) { configuration in
-                            configuration.label
-                                .padding(8)
-                                .background(colors.surface.opacity(0.5))
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(colors.border, lineWidth: 1)
-                                )
-                        }
-                        .textSelection(.enabled)
-
-                    // Fade-out gradient overlay to indicate more content
-                    if remainingInfo.hasMore {
-                        LinearGradient(
-                            colors: [
-                                Color.clear,
-                                colors.background.opacity(0.8)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 40)
-                        .allowsHitTesting(false)
-                        .padding(.top, -40)
-                    }
-                }
-
-                // Show more button
-                Button {
-                    withAnimation(expandAnimation) {
-                        isExpanded = true
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.down.circle.fill")
-                            .font(.system(size: 14))
-                            .symbolRenderingMode(.hierarchical)
-                        Text("Show more")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        if remainingInfo.charCount > 0 {
-                            Text("(\(formatCharCount(remainingInfo.charCount)) more)")
-                                .font(.caption2)
-                                .foregroundStyle(colors.textSecondary)
-                        }
-                    }
-                    .foregroundStyle(colors.accent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(colors.accentBackground)
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
-            } else {
-                // Expanded or not needing collapse
-                Markdown(content)
+                Markdown(previewContent + "...")
                     .markdownTextStyle(\.text) {
                         ForegroundColor(textColor)
                         FontSize(15)
@@ -387,7 +208,7 @@ struct CollapsibleMessageContent: View {
                     .markdownBlockStyle(\.codeBlock) { configuration in
                         CodeBlockView(
                             language: configuration.language,
-                            codeContent: configuration.content,
+                            messageContent: content,
                             codeLabel: configuration.label,
                             messageId: messageId,
                             conversationId: conversationId
@@ -414,40 +235,89 @@ struct CollapsibleMessageContent: View {
                     }
                     .textSelection(.enabled)
 
-                // Show less button (only if message was collapsible)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isExpanded = true
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Show more")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(colors.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(colors.accentBackground)
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Markdown(content)
+                    .markdownTextStyle(\.text) {
+                        ForegroundColor(textColor)
+                        FontSize(15)
+                    }
+                    .markdownTextStyle(\.code) {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(14)
+                        ForegroundColor(colors.accent)
+                        BackgroundColor(colors.accentBackground)
+                    }
+                    .markdownBlockStyle(\.codeBlock) { configuration in
+                        CodeBlockView(
+                            language: configuration.language,
+                            messageContent: content,
+                            codeLabel: configuration.label,
+                            messageId: messageId,
+                            conversationId: conversationId
+                        )
+                    }
+                    .markdownBlockStyle(\.blockquote) { configuration in
+                        configuration.label
+                            .padding(.leading, 12)
+                            .overlay(alignment: .leading) {
+                                Rectangle()
+                                    .fill(colors.info.opacity(0.5))
+                                    .frame(width: 4)
+                            }
+                    }
+                    .markdownBlockStyle(\.table) { configuration in
+                        configuration.label
+                            .padding(8)
+                            .background(colors.surface.opacity(0.5))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(colors.border, lineWidth: 1)
+                            )
+                    }
+                    .textSelection(.enabled)
+
                 if shouldCollapse && isExpanded {
                     Button {
-                        withAnimation(expandAnimation) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
                             isExpanded = false
                         }
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.up.circle.fill")
-                                .font(.system(size: 14))
-                                .symbolRenderingMode(.hierarchical)
+                        HStack(spacing: 4) {
                             Text("Show less")
                                 .font(.caption)
                                 .fontWeight(.medium)
+                            Image(systemName: "chevron.up")
+                                .font(.caption2)
                         }
                         .foregroundStyle(colors.accent)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
                         .background(colors.accentBackground)
-                        .cornerRadius(8)
+                        .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 4)
                 }
             }
         }
-        .animation(expandAnimation, value: isExpanded)
-    }
-
-    // Format character count for display
-    private func formatCharCount(_ count: Int) -> String {
-        if count >= 1000 {
-            return String(format: "%.1fK", Double(count) / 1000.0)
-        }
-        return "\(count)"
     }
 }

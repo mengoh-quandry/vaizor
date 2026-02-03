@@ -675,14 +675,14 @@ struct ShellSyntaxHighlighter: View {
     private var highlightedText: AttributedString {
         var attributedString = AttributedString(code)
 
-        // Define color scheme
-        let commandColor = Color(hex: "61afef")      // Blue - commands
-        let stringColor = Color(hex: "98c379")       // Green - strings
-        let variableColor = Color(hex: "e06c75")     // Red - variables
-        let commentColor = Color(hex: "7f848e")      // Gray - comments
-        let keywordColor = Color(hex: "c678dd")      // Purple - keywords
-        let flagColor = Color(hex: "d19a66")         // Orange - flags
-        let operatorColor = Color(hex: "56b6c2")     // Cyan - operators
+        // Use centralized code syntax colors
+        let commandColor = CodeSyntaxColors.command
+        let stringColor = CodeSyntaxColors.string
+        let variableColor = CodeSyntaxColors.variable
+        let commentColor = CodeSyntaxColors.comment
+        let keywordColor = CodeSyntaxColors.keyword
+        let flagColor = CodeSyntaxColors.flag
+        let operatorColor = CodeSyntaxColors.operator
 
         // Highlight patterns based on shell type
         let patterns: [(String, Color)] = getPatterns(for: shellType)
@@ -704,12 +704,12 @@ struct ShellSyntaxHighlighter: View {
     }
 
     private func getPatterns(for shell: ShellType) -> [(String, Color)] {
-        let commandColor = Color(hex: "61afef")
-        let stringColor = Color(hex: "98c379")
-        let variableColor = Color(hex: "e06c75")
-        let commentColor = Color(hex: "7f848e")
-        let keywordColor = Color(hex: "c678dd")
-        let flagColor = Color(hex: "d19a66")
+        let commandColor = CodeSyntaxColors.command
+        let stringColor = CodeSyntaxColors.string
+        let variableColor = CodeSyntaxColors.variable
+        let commentColor = CodeSyntaxColors.comment
+        let keywordColor = CodeSyntaxColors.keyword
+        let flagColor = CodeSyntaxColors.flag
 
         var patterns: [(String, Color)] = []
 

@@ -10,12 +10,12 @@ struct SecurityDashboardView: View {
     @State private var showExportSheet = false
     @State private var exportDocument: AuditLogDocument?
 
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     enum SecurityTab: String, CaseIterable {
         case overview = "Overview"
@@ -217,7 +217,7 @@ private struct StatBadge: View {
 
             Text(title)
                 .font(.system(size: 10))
-                .foregroundStyle(Color(hex: "808080"))
+                .foregroundStyle(ThemeColors.textSecondary)
         }
         .frame(minWidth: 60)
     }
@@ -228,11 +228,11 @@ private struct StatBadge: View {
 private struct OverviewContent: View {
     @ObservedObject var edrService: AiEDRService
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 20) {
@@ -331,9 +331,9 @@ private struct StatusCard: View {
     let statusColor: Color
     let description: String
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -376,10 +376,10 @@ private struct QuickStatCard: View {
     let title: String
     let items: [(String, Bool)]
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -415,9 +415,9 @@ private struct QuickStatCard: View {
 private struct CompactAlertRow: View {
     let alert: SecurityAlert
 
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack(spacing: 12) {
@@ -456,11 +456,11 @@ private struct AlertsContent: View {
     @State private var filterSeverity: ThreatLevel?
     @State private var filterType: AlertType?
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     private var filteredAlerts: [SecurityAlert] {
         edrService.activeAlerts.filter { alert in
@@ -575,10 +575,10 @@ private struct AlertRow: View {
 
     @State private var isExpanded = false
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -707,10 +707,10 @@ private struct AuditLogContent: View {
     @State private var filterEventType: AuditEventType?
     @State private var searchText = ""
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     private var filteredEntries: [AuditEntry] {
         edrService.auditLog.filter { entry in
@@ -806,9 +806,9 @@ private struct AuditLogContent: View {
 private struct AuditEntryRow: View {
     let entry: AuditEntry
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack(spacing: 12) {
@@ -846,11 +846,11 @@ private struct HostSecurityContent: View {
     @ObservedObject var edrService: AiEDRService
     @Binding var isPerformingCheck: Bool
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 20) {
@@ -1003,7 +1003,7 @@ private struct SecurityCheckItem: View {
     let title: String
     let isEnabled: Bool
 
-    private let accent = Color(hex: "00976d")
+    private let accent = ThemeColors.accent
     private let textPrimary = Color.white
 
     var body: some View {
@@ -1030,7 +1030,7 @@ private struct ProcessRow: View {
     let process: ProcessInfo
 
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1068,7 +1068,7 @@ private struct PortRow: View {
     let port: PortInfo
 
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack {
@@ -1108,11 +1108,11 @@ private struct PortRow: View {
 private struct EDRSettingsContent: View {
     @ObservedObject var edrService: AiEDRService
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -1225,8 +1225,8 @@ private struct SettingsSectionCard<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
-    private let darkSurface = Color(hex: "232426")
-    private let textSecondary = Color(hex: "808080")
+    private let darkSurface = ThemeColors.darkSurface
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1252,8 +1252,8 @@ private struct SettingsToggleItem: View {
     @Binding var isOn: Bool
 
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         HStack {
@@ -1285,7 +1285,7 @@ private struct EmptyStateView: View {
     let message: String
 
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1310,35 +1310,42 @@ private struct EmptyStateView: View {
 
 private struct SecurityButtonStyle: ButtonStyle {
     var isDestructive: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(isDestructive ? .red : .white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .font(VaizorTypography.label)
+            .foregroundStyle(isDestructive ? .red : ThemeColors.textPrimary)
+            .padding(.horizontal, VaizorSpacing.sm)
+            .padding(.vertical, VaizorSpacing.xs)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(configuration.isPressed ? Color(hex: "2d2e30") : Color(hex: "232426"))
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous)
+                    .fill(configuration.isPressed ? ThemeColors.darkBorder : ThemeColors.darkSurface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isDestructive ? Color.red.opacity(0.3) : Color(hex: "2d2e30"), lineWidth: 1)
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous)
+                    .stroke(isDestructive ? Color.red.opacity(0.3) : ThemeColors.darkBorder, lineWidth: 1)
             )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
 private struct SecurityAccentButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(VaizorTypography.label)
             .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, VaizorSpacing.sm + 2)
+            .padding(.vertical, VaizorSpacing.xs)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(configuration.isPressed ? Color(hex: "00976d").opacity(0.8) : Color(hex: "00976d"))
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous)
+                    .fill(configuration.isPressed ? ThemeColors.accent.opacity(0.8) : ThemeColors.accent)
             )
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

@@ -820,35 +820,64 @@ class MCPServerManager: ObservableObject {
     /// Call built-in web search tool
     private func callBuiltInWebSearch(arguments: [String: Any]) async -> MCPToolResult {
         AppLogger.shared.log("Calling built-in web search tool", level: .info)
-        
+
         guard let query = arguments["query"] as? String ?? arguments["q"] as? String else {
             return MCPToolResult(
                 content: [MCPContent(type: "text", text: "Error: 'query' parameter is required for web_search")],
                 isError: true
             )
         }
-        
+
         let maxResults = (arguments["max_results"] as? Int) ?? (arguments["maxResults"] as? Int) ?? 5
-        
+
+        // Get current date/time for temporal context
+        let now = Date()
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        let currentDate = dateFormatter.string(from: now)
+        dateFormatter.dateFormat = "h:mm a zzz"
+        let currentTime = dateFormatter.string(from: now)
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let isoDate = dateFormatter.string(from: now)
+
         do {
             let results = try await WebSearchService.shared.search(query, maxResults: maxResults)
-            
+
             if results.isEmpty {
                 return MCPToolResult(
-                    content: [MCPContent(type: "text", text: "No search results found for: \(query)")],
+                    content: [MCPContent(type: "text", text: """
+                        **Search Context:** \(currentDate) at \(currentTime)
+
+                        No search results found for: \(query)
+
+                        *Note: Try rephrasing your query or using different keywords.*
+                        """)],
                     isError: false
                 )
             }
-            
-            // Format results as markdown
-            var resultText = "## Web Search Results for: \(query)\n\n"
+
+            // Format results as markdown with temporal context
+            var resultText = """
+                ## Web Search Results
+                **Query:** \(query)
+                **Search Date:** \(currentDate) at \(currentTime) (ISO: \(isoDate))
+
+                ---
+
+                """
+
             for (index, result) in results.enumerated() {
                 resultText += "### \(index + 1). \(result.title)\n"
                 resultText += "**URL:** \(result.url)\n"
                 resultText += "**Snippet:** \(result.snippet)\n"
                 resultText += "**Source:** \(result.source)\n\n"
             }
-            
+
+            resultText += """
+                ---
+                *Results retrieved on \(currentDate). For time-sensitive queries, note that results reflect information available as of this date.*
+                """
+
             return MCPToolResult(
                 content: [MCPContent(type: "text", text: resultText)],
                 isError: false
@@ -856,7 +885,13 @@ class MCPServerManager: ObservableObject {
         } catch {
             AppLogger.shared.logError(error, context: "Web search failed")
             return MCPToolResult(
-                content: [MCPContent(type: "text", text: "Error performing web search: \(error.localizedDescription)")],
+                content: [MCPContent(type: "text", text: """
+                    **Search Context:** \(currentDate) at \(currentTime)
+
+                    Error performing web search: \(error.localizedDescription)
+
+                    *The search service may be temporarily unavailable. Please try again.*
+                    """)],
                 isError: true
             )
         }
