@@ -34,10 +34,21 @@ extension Notification.Name {
 @main
 struct VaizorApp: App {
     @StateObject private var container = DependencyContainer()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Initialize logging
         AppLogger.shared.log("Vaizor app starting", level: .info)
+
+        // Register for app termination to checkpoint database
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            DatabaseManager.shared.checkpoint()
+            AppLogger.shared.log("Database checkpointed on app termination", level: .info)
+        }
 
         // Initialize all systems
         Task {
@@ -116,6 +127,13 @@ struct VaizorApp: App {
                 .withAdaptiveColors()
                 .onAppear {
                     AppLogger.shared.log("ContentView appeared", level: .info)
+                }
+                .onChange(of: scenePhase) { oldPhase, newPhase in
+                    if newPhase == .background || newPhase == .inactive {
+                        // Checkpoint database when app goes to background
+                        DatabaseManager.shared.checkpoint()
+                        AppLogger.shared.log("Database checkpointed on scene phase: \(newPhase)", level: .info)
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)

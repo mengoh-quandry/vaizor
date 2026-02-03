@@ -82,10 +82,27 @@ final class DatabaseManager: @unchecked Sendable {
         try dbQueue.write { db in
             if useWAL {
                 try db.execute(sql: "PRAGMA journal_mode = WAL;")
+                // Checkpoint after every transaction for durability
+                // This prevents data loss if app crashes without proper shutdown
+                try db.execute(sql: "PRAGMA wal_autocheckpoint = 1;")
             } else {
                 try db.execute(sql: "PRAGMA journal_mode = MEMORY;")
             }
             try db.execute(sql: "PRAGMA foreign_keys = ON;")
+            try db.execute(sql: "PRAGMA synchronous = FULL;")  // Ensure writes hit disk
+        }
+    }
+
+    /// Checkpoint the WAL to ensure all data is written to the main database file
+    func checkpoint() {
+        do {
+            try dbQueue.write { db in
+                try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE);")
+            }
+        } catch {
+            Task { @MainActor in
+                AppLogger.shared.log("WAL checkpoint failed: \(error)", level: .warning)
+            }
         }
     }
 
