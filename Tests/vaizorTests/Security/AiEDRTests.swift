@@ -46,7 +46,7 @@ final class AiEDRTests: XCTestCase {
 
     func testAllAlertTypes() {
         let allTypes = AlertType.allCases
-        XCTAssertEqual(allTypes.count, 11)
+        XCTAssertEqual(allTypes.count, 36)  // Updated: enum expanded with comprehensive threat categories
         XCTAssertTrue(allTypes.contains(.promptInjection))
         XCTAssertTrue(allTypes.contains(.dataExfiltration))
         XCTAssertTrue(allTypes.contains(.maliciousCode))
