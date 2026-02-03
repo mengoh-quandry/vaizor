@@ -55,7 +55,8 @@ class ExtensionRegistry: ObservableObject {
         isLoading = true
         lastError = nil
 
-        var allExtensions: [MCPExtension] = []
+        // Start with bundled extensions to preserve them
+        var allExtensions: [MCPExtension] = bundledExtensions
 
         for registryURL in registryURLs {
             do {
@@ -64,11 +65,11 @@ class ExtensionRegistry: ObservableObject {
                 AppLogger.shared.log("Fetched \(extensions.count) extensions from \(registryURL)", level: .info)
             } catch {
                 AppLogger.shared.logError(error, context: "Failed to fetch from registry: \(registryURL)")
-                // Continue with other registries
+                // Continue with other registries - bundled extensions still available
             }
         }
 
-        // Deduplicate by ID (keep first occurrence)
+        // Deduplicate by ID (keep first occurrence - bundled take priority)
         var seen = Set<String>()
         availableExtensions = allExtensions.filter { ext in
             if seen.contains(ext.id) { return false }
@@ -79,8 +80,13 @@ class ExtensionRegistry: ObservableObject {
         lastRefresh = Date()
         isLoading = false
 
-        AppLogger.shared.log("Registry refresh complete: \(availableExtensions.count) total extensions", level: .info)
+        AppLogger.shared.log("Registry refresh complete: \(availableExtensions.count) total extensions (\(bundledExtensions.count) bundled)", level: .info)
     }
+
+    // MARK: - Bundled Extensions
+
+    /// Built-in extensions that are always available
+    private var bundledExtensions: [MCPExtension] = []
 
     /// Fetch extensions from a single registry
     private func fetchExtensions(from registryURL: URL) async throws -> [MCPExtension] {
@@ -460,12 +466,9 @@ class ExtensionRegistry: ObservableObject {
             )
         ]
 
-        // Add bundled extensions if not already in available list
-        for ext in bundledExtensions {
-            if !availableExtensions.contains(where: { $0.id == ext.id }) {
-                availableExtensions.append(ext)
-            }
-        }
+        // Store bundled extensions and add to available list
+        self.bundledExtensions = bundledExtensions
+        availableExtensions = bundledExtensions
     }
 
     // MARK: - Verification
