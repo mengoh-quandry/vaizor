@@ -480,6 +480,34 @@ class ChatViewModel: ObservableObject {
             AppLogger.shared.log("Redacted \(redactionResult.redactionMap.count) sensitive items: \(redactionResult.detectedPatterns.joined(separator: ", "))", level: .info)
         }
 
+        // Check for matching skill before sending
+        var matchedSkillContent: String? = nil
+        if let agent = agentService, let skill = await agent.findMatchingSkill(for: text) {
+            matchedSkillContent = skill.content
+            AppLogger.shared.log("Matched skill: \(skill.manifest.name)", level: .info)
+        }
+
+        // Build enhanced configuration with skill content if matched
+        let effectiveConfiguration: LLMConfiguration
+        if let skillContent = matchedSkillContent {
+            var enhancedPrompt = configuration.systemPrompt ?? ""
+            if !enhancedPrompt.isEmpty {
+                enhancedPrompt += "\n\n"
+            }
+            enhancedPrompt += "## Active Skill\n\(skillContent)"
+            effectiveConfiguration = LLMConfiguration(
+                provider: configuration.provider,
+                model: configuration.model,
+                temperature: configuration.temperature,
+                maxTokens: configuration.maxTokens,
+                systemPrompt: enhancedPrompt,
+                enableChainOfThought: configuration.enableChainOfThought,
+                enablePromptEnhancement: configuration.enablePromptEnhancement
+            )
+        } else {
+            effectiveConfiguration = configuration
+        }
+
         // Convert mention references if provided
         let mentionRefs = mentionReferences?.map { MentionReference(from: $0) }
 
@@ -502,7 +530,7 @@ class ChatViewModel: ObservableObject {
 
         // Handle parallel mode (user message already saved above)
         if isParallelMode && !selectedModels.isEmpty {
-            await sendMessageParallel(text: textToSend, configuration: configuration, replaceAtIndex: replaceAtIndex)
+            await sendMessageParallel(text: textToSend, configuration: effectiveConfiguration, replaceAtIndex: replaceAtIndex)
             return
         }
 
@@ -552,7 +580,7 @@ class ChatViewModel: ObservableObject {
                 try await AppLogger.shared.measurePerformanceAsync("sendMessage") {
                     try await provider.streamMessage(
                         textToSend, // Send redacted text to LLM
-                        configuration: configuration,
+                        configuration: effectiveConfiguration,
                         conversationHistory: redactedHistory,
                         onChunk: { [weak self] chunk in
                             guard !Task.isCancelled else { return }
