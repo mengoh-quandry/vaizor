@@ -1,6 +1,18 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Appendage Notifications
+
+extension Notification.Name {
+    /// Posted when an appendage completes its work (success or failure)
+    /// userInfo contains: "appendageId" (UUID), "result" (AppendageResult), "success" (Bool)
+    static let appendageDidComplete = Notification.Name("appendageDidComplete")
+
+    /// Posted when an appendage starts executing
+    /// userInfo contains: "appendageId" (UUID), "taskDescription" (String)
+    static let appendageDidStart = Notification.Name("appendageDidStart")
+}
+
 // MARK: - Appendage System
 // Appendages are NOT separate agents. They are parallel execution threads of a single unified identity.
 // Like a person who can type with their hands while listening, walk while thinking about a problem,
@@ -152,6 +164,12 @@ enum AppendageError: Error, LocalizedError {
     }
 }
 
+// MARK: - Tool Executor Protocol
+
+/// Type alias for tool execution closure that can be called from appendages
+/// The closure runs on MainActor since MCPServerManager is @MainActor
+typealias ToolExecutor = @MainActor @Sendable (String, [String: Any]) async -> MCPToolResult
+
 // MARK: - Appendage Coordinator
 
 /// Central coordinator for all appendages - ensures unified identity across all parallel executions
@@ -163,8 +181,23 @@ actor AppendageCoordinator {
     // Continuation storage for awaiting results
     private var resultContinuations: [UUID: CheckedContinuation<AppendageResult, Error>] = [:]
 
+    /// Tool executor closure - set this to wire up MCP tool execution
+    /// Must be set before spawning appendages that use tool execution
+    private var toolExecutor: ToolExecutor?
+
     init(personalFileManager: PersonalFileManager) {
         self.personalFileManager = personalFileManager
+    }
+
+    /// Configure the tool executor for MCP tool execution
+    /// Call this after initialization to wire up MCPServerManager.callTool
+    func setToolExecutor(_ executor: @escaping ToolExecutor) {
+        self.toolExecutor = executor
+    }
+
+    /// Get the current tool executor (for passing to appendages)
+    func getToolExecutor() -> ToolExecutor? {
+        return toolExecutor
     }
 
     /// Central identity reference - all appendages share this
@@ -188,7 +221,8 @@ actor AppendageCoordinator {
             id: task.id,
             task: task,
             identityContext: identityContext,
-            coordinator: self
+            coordinator: self,
+            toolExecutor: toolExecutor
         )
 
         activeAppendages[appendage.id] = appendage
@@ -205,6 +239,20 @@ actor AppendageCoordinator {
         // Notify partner about new appendage
         if task.notifyOnCompletion {
             await notifyPartner(.appendageSpawned, message: "Starting: \(task.description)")
+        }
+
+        // Post system-wide notification for any observers
+        let taskDescription = task.description
+        let appendageId = appendage.id
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .appendageDidStart,
+                object: nil,
+                userInfo: [
+                    "appendageId": appendageId,
+                    "taskDescription": taskDescription
+                ]
+            )
         }
 
         // Start execution in background
@@ -270,6 +318,21 @@ actor AppendageCoordinator {
         if appendage.task.notifyOnCompletion {
             let notificationType: NotificationType = result.success ? .appendageCompleted : .appendageError
             await notifyPartner(notificationType, message: result.summary)
+        }
+
+        // Post system-wide notification for any observers
+        let taskDescription = appendage.task.description
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .appendageDidComplete,
+                object: nil,
+                userInfo: [
+                    "appendageId": id,
+                    "result": result,
+                    "success": result.success,
+                    "taskDescription": taskDescription
+                ]
+            )
         }
 
         // Resume any waiting continuations
@@ -366,6 +429,7 @@ actor Appendage {
     let task: AppendageTask
     private let identityContext: PersonalFileManager.IdentityContext
     private weak var coordinator: AppendageCoordinator?
+    private let toolExecutor: ToolExecutor?
 
     private(set) var status: AppendageStatus = .active
     private(set) var progress: Float = 0.0
@@ -378,12 +442,14 @@ actor Appendage {
         id: UUID,
         task: AppendageTask,
         identityContext: PersonalFileManager.IdentityContext,
-        coordinator: AppendageCoordinator
+        coordinator: AppendageCoordinator,
+        toolExecutor: ToolExecutor? = nil
     ) {
         self.id = id
         self.task = task
         self.identityContext = identityContext
         self.coordinator = coordinator
+        self.toolExecutor = toolExecutor
         self.startTime = Date()
     }
 
@@ -524,16 +590,74 @@ actor Appendage {
     }
 
     private func executeTool(_ toolName: String, parameters: [String: String]) async -> AppendageResult {
-        await reportProgress(0.5, status: "Executing \(toolName)")
+        await reportProgress(0.1, status: "Starting tool: \(toolName)")
 
-        // Tool execution would call into the MCP/tool system
-        // This is a placeholder
+        // Check if tool executor is configured
+        guard let executor = toolExecutor else {
+            await reportProgress(1.0, status: "Tool execution not available")
+            return AppendageResult(
+                taskId: id,
+                success: false,
+                summary: "Tool execution failed: No tool executor configured",
+                errors: ["Tool executor not configured. Ensure MCPServerManager is wired to AppendageCoordinator."],
+                duration: Date().timeIntervalSince(startTime)
+            )
+        }
+
+        // Check for cancellation before starting
+        if cancellationRequested {
+            return AppendageResult(
+                taskId: id,
+                success: false,
+                summary: "Tool execution cancelled",
+                errors: ["Cancelled by user"],
+                duration: Date().timeIntervalSince(startTime)
+            )
+        }
+
+        await reportProgress(0.3, status: "Executing \(toolName)")
+
+        // Convert parameters to [String: Any] for MCP tool call
+        let arguments: [String: Any] = parameters.reduce(into: [:]) { result, pair in
+            result[pair.key] = pair.value
+        }
+
+        // Execute the tool via MainActor (MCPServerManager is @MainActor)
+        let mcpResult = await executor(toolName, arguments)
+
+        await reportProgress(0.9, status: "Processing result")
+
+        // Extract text content from the result
+        let resultText = mcpResult.content.compactMap { content -> String? in
+            if content.type == "text" {
+                return content.text
+            }
+            return nil
+        }.joined(separator: "\n")
+
+        // Determine success based on MCPToolResult.isError
+        let success = !mcpResult.isError
+
+        await reportProgress(1.0, status: success ? "Completed" : "Failed")
+
+        // Build learned facts if tool succeeded
+        var learnedFacts: [LearnedFact] = []
+        if success && !resultText.isEmpty {
+            // Record that we successfully used this tool
+            learnedFacts.append(LearnedFact(
+                fact: "Successfully executed tool '\(toolName)' with \(parameters.count) parameters",
+                source: "tool execution"
+            ))
+        }
 
         return AppendageResult(
             taskId: id,
-            success: true,
-            summary: "Executed tool: \(toolName)",
-            duration: Date().timeIntervalSince(startTime)
+            success: success,
+            summary: success ? "Tool '\(toolName)' completed successfully" : "Tool '\(toolName)' failed",
+            learnedFacts: learnedFacts,
+            errors: mcpResult.isError ? [resultText] : [],
+            duration: Date().timeIntervalSince(startTime),
+            outputData: success ? ["result": resultText] : nil
         )
     }
 
