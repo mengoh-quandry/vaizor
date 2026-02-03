@@ -76,6 +76,9 @@ class AgentService: ObservableObject {
             isInitialized = true
             AppLogger.shared.log("Agent service initialized", level: .info)
 
+            // Auto-start system observation
+            startObserving()
+
         } catch {
             AppLogger.shared.log("Failed to initialize agent service: \(error)", level: .error)
         }
