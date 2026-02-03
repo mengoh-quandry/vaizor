@@ -139,7 +139,11 @@ struct WebView: NSViewRepresentable {
     @Binding var htmlContent: String
 
     func makeNSView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let config = WKWebViewConfiguration()
+        config.defaultWebpagePreferences.allowsContentJavaScript = true
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         return webView
     }
@@ -158,7 +162,20 @@ struct WebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("WebView failed to load: \(error.localizedDescription)")
+            AppLogger.shared.log("WebView failed to load: \(error.localizedDescription)", level: .warning)
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+            // Block external navigation for security
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               (url.scheme == "http" || url.scheme == "https") {
+                NSWorkspace.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
         }
     }
 }

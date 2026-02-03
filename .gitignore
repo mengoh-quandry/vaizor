@@ -29,6 +29,14 @@ Carthage/Build/
 
 # Build artifacts
 *.app
+*.dmg
+build/
+
+# Build configuration (contains credentials)
+build-config.sh
+
+# Notarization artifacts
+*-notarization.zip
 
 # Git Worktrees
 .worktrees/
