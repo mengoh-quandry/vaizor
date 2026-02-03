@@ -419,41 +419,174 @@ struct ToolRowView: View {
     }
 }
 
-// MARK: - Compact Tools Button for Input Bar
+// MARK: - Arc/Radial Tools Button for Input Bar
 
 struct BuiltInToolsButton: View {
     @ObservedObject var manager = BuiltInToolsManager.shared
-    @State private var showToolsPopover = false
+    @State private var isExpanded = false
+    @State private var hoveredTool: String? = nil
+
+    // Arc configuration
+    private let arcRadius: CGFloat = 70
+    private let startAngle: Double = -150 // Start angle (degrees, 0 = right)
+    private let endAngle: Double = -30    // End angle (degrees)
+
+    private var tools: [BuiltInTool] {
+        manager.tools
+    }
 
     var body: some View {
+        // Main button with popover for arc tools
         Button {
-            showToolsPopover.toggle()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                isExpanded.toggle()
+            }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 14))
-                    .foregroundStyle(manager.runningToolCount > 0 ? Color(hex: "00976d") : .secondary)
+            ZStack {
+                Circle()
+                    .fill(isExpanded ? Color(hex: "00976d") : Color.clear)
+                    .frame(width: 28, height: 28)
 
-                // Running tools count badge
-                if manager.runningToolCount > 0 {
-                    Text("\(manager.runningToolCount)")
-                        .font(.caption2)
-                        .fontWeight(.medium)
+                Image(systemName: isExpanded ? "xmark" : "wrench.and.screwdriver")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(isExpanded ? .white : (manager.enabledToolCount > 0 ? Color(hex: "00976d") : .secondary))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                // Enabled count badge (when collapsed)
+                if !isExpanded && manager.enabledToolCount > 0 {
+                    Text("\(manager.enabledToolCount)")
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color(hex: "00976d"))
-                        )
+                        .frame(width: 12, height: 12)
+                        .background(Circle().fill(Color(hex: "00976d")))
+                        .offset(x: 9, y: -9)
                 }
             }
         }
         .buttonStyle(.plain)
-        .help("Manage built-in tools")
-        .popover(isPresented: $showToolsPopover) {
-            BuiltInToolsToggleView()
-                .frame(width: 320, height: 350)
+        .help("Toggle tools")
+        .popover(isPresented: $isExpanded, arrowEdge: .top) {
+            // Tools grid in popover
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Built-in Tools")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
+                VStack(spacing: 4) {
+                    ForEach(tools) { tool in
+                        Button {
+                            manager.toggleTool(tool.id)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: tool.icon)
+                                    .font(.system(size: 14))
+                                    .frame(width: 20)
+                                    .foregroundStyle(tool.isEnabled ? Color(hex: "00976d") : .secondary)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tool.displayName)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                    Text(tool.description)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: tool.isEnabled ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(tool.isEnabled ? Color(hex: "00976d") : .secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(tool.isEnabled ? Color(hex: "00976d").opacity(0.1) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
+            }
+            .frame(width: 280)
         }
+    }
+
+    private func angleForIndex(_ index: Int, total: Int) -> Double {
+        guard total > 1 else { return (startAngle + endAngle) / 2 }
+        let step = (endAngle - startAngle) / Double(total - 1)
+        return startAngle + step * Double(index)
+    }
+
+    private func offsetForAngle(_ angleDegrees: Double) -> CGSize {
+        let angleRadians = angleDegrees * Double.pi / 180
+        return CGSize(
+            width: Foundation.cos(angleRadians) * arcRadius,
+            height: Foundation.sin(angleRadians) * arcRadius
+        )
+    }
+}
+
+// MARK: - Individual Arc Tool Item
+
+private struct ArcToolItem: View {
+    let tool: BuiltInTool
+    let isExpanded: Bool
+    let isHovered: Bool
+    let offset: CGSize
+    let delay: Double
+    let onToggle: () -> Void
+
+    @State private var appeared = false
+
+    var body: some View {
+        Button(action: onToggle) {
+            ZStack {
+                // Background circle
+                Circle()
+                    .fill(tool.isEnabled ? Color(hex: "00976d").opacity(0.9) : Color(nsColor: .controlBackgroundColor))
+                    .frame(width: isHovered ? 44 : 38, height: isHovered ? 44 : 38)
+                    .shadow(color: .black.opacity(0.2), radius: isHovered ? 6 : 3, y: 2)
+
+                // Tool icon
+                Image(systemName: tool.icon)
+                    .font(.system(size: isHovered ? 16 : 14, weight: .medium))
+                    .foregroundStyle(tool.isEnabled ? .white : .secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(tool.displayName)
+        .offset(isExpanded && appeared ? offset : .zero)
+        .scaleEffect(isExpanded && appeared ? 1 : 0.3)
+        .opacity(isExpanded && appeared ? 1 : 0)
+        .animation(
+            .spring(response: 0.4, dampingFraction: 0.7).delay(isExpanded ? delay : 0),
+            value: isExpanded
+        )
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isHovered)
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded {
+                appeared = true
+            } else {
+                // Delay disappearance for staggered collapse
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    appeared = false
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Tool Count Extension
+
+extension BuiltInToolsManager {
+    var enabledToolCount: Int {
+        tools.filter { $0.isEnabled }.count
     }
 }

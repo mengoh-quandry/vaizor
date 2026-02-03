@@ -2,6 +2,45 @@ import SwiftUI
 import WebKit
 import SystemConfiguration
 
+// MARK: - Liquid Glass Compatibility Modifiers
+
+/// Provides glass effect with fallback for older macOS versions
+struct GlassBackgroundModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let interactive: Bool
+    
+    init(cornerRadius: CGFloat, interactive: Bool = false) {
+        self.cornerRadius = cornerRadius
+        self.interactive = interactive
+    }
+    
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(interactive ? .regular.interactive() : .regular, in: .rect(cornerRadius: cornerRadius))
+        } else {
+            // Fallback: Use translucent material for macOS 15
+            content
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        }
+    }
+}
+
+/// Provides glass button style with fallback
+struct GlassButtonStyleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .buttonStyle(.glass)
+        } else {
+            // Fallback: Use bordered button style for macOS 15
+            content
+                .buttonStyle(.bordered)
+        }
+    }
+}
+
 /// Claude-style artifact preview view
 struct ArtifactView: View {
     let artifact: Artifact
@@ -24,9 +63,7 @@ struct ArtifactView: View {
                 previewView
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .modifier(GlassBackgroundModifier(cornerRadius: 12))
     }
 
     private var artifactHeader: some View {
@@ -50,36 +87,18 @@ struct ArtifactView: View {
             Spacer()
 
             // Toggle buttons
-            HStack(spacing: 4) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showCode = false
+            Group {
+                if #available(macOS 26.0, *) {
+                    GlassEffectContainer(spacing: 4.0) {
+                        HStack(spacing: 4) {
+                            previewCodeButtons
+                        }
                     }
-                } label: {
-                    Label("Preview", systemImage: "eye")
-                        .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(showCode ? Color.clear : Color.accentColor.opacity(0.15))
-                        .foregroundColor(showCode ? .secondary : Color.accentColor)
-                        .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showCode = true
+                } else {
+                    HStack(spacing: 4) {
+                        previewCodeButtons
                     }
-                } label: {
-                    Label("Code", systemImage: "chevron.left.forwardslash.chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(showCode ? Color.accentColor.opacity(0.15) : Color.clear)
-                        .foregroundColor(showCode ? Color.accentColor : .secondary)
-                        .cornerRadius(6)
                 }
-                .buttonStyle(.plain)
             }
 
             Divider()
@@ -93,14 +112,43 @@ struct ArtifactView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 24, height: 24)
-                    .background(Color.primary.opacity(0.05))
-                    .cornerRadius(6)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
+            .modifier(GlassBackgroundModifier(cornerRadius: 6, interactive: true))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.regularMaterial)
+    }
+    
+    @ViewBuilder
+    private var previewCodeButtons: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showCode = false
+            }
+        } label: {
+            Label("Preview", systemImage: "eye")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+        }
+        .modifier(GlassButtonStyleModifier())
+        .disabled(!showCode)
+        
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showCode = true
+            }
+        } label: {
+            Label("Code", systemImage: "chevron.left.forwardslash.chevron.right")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+        }
+        .modifier(GlassButtonStyleModifier())
+        .disabled(showCode)
     }
 
     private var previewView: some View {
@@ -183,10 +231,6 @@ struct ArtifactWebView: NSViewRepresentable {
         // 3. Current working directory
         let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
         possiblePaths.append(cwd.appendingPathComponent("Resources/js"))
-
-        // 4. Known development paths as fallback
-        possiblePaths.append(URL(fileURLWithPath: "/Users/marcus/Downloads/vaizor/Resources/js"))
-        possiblePaths.append(URL(fileURLWithPath: "/Users/marcus/.cursor/worktrees/vaizor/slq/Resources/js"))
 
         // Log what we're searching
         AppLogger.shared.log("Searching for JS libraries in \(possiblePaths.count) locations...", level: .debug)
@@ -1387,8 +1431,98 @@ struct InlineArtifactView: View {
     let artifact: Artifact
     @State private var isExpanded = false
     @State private var showFullPreview = false
+    @Namespace private var namespace
 
     var body: some View {
+        if #available(macOS 26.0, *) {
+            modernGlassView
+        } else {
+            fallbackView
+        }
+    }
+    
+    @available(macOS 26.0, *)
+    private var modernGlassView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Collapsed header
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    // Icon with glass background
+                    Image(systemName: artifact.type.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 28, height: 28)
+                        .glassEffect(.regular.tint(.accentColor), in: .rect(cornerRadius: 6))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(artifact.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        Text("Click to \(isExpanded ? "collapse" : "preview")")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    // Buttons with glass container for merging effects
+                    GlassEffectContainer(spacing: 8.0) {
+                        HStack(spacing: 8) {
+                            // Expand button
+                            Button {
+                                showFullPreview = true
+                            } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(.borderless)
+                            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 6))
+                            .glassEffectID("expand", in: namespace)
+
+                            // Chevron
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                .frame(width: 24, height: 24)
+                                .glassEffect(.regular, in: .rect(cornerRadius: 6))
+                                .glassEffectID("chevron", in: namespace)
+                        }
+                    }
+                }
+                .padding(12)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: .rect(cornerRadius: 10))
+
+            // Expanded preview
+            if isExpanded {
+                ArtifactWebView(
+                    artifact: artifact,
+                    isLoading: .constant(false),
+                    error: .constant(nil)
+                )
+                .frame(height: 300)
+                .glassEffect(.regular, in: .rect(cornerRadius: 10))
+                .padding(.top, 8)
+            }
+        }
+        .sheet(isPresented: $showFullPreview) {
+            ArtifactView(artifact: artifact) {
+                showFullPreview = false
+            }
+            .frame(minWidth: 600, minHeight: 500)
+        }
+    }
+    
+    private var fallbackView: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Collapsed header
             Button {
@@ -1420,29 +1554,33 @@ struct InlineArtifactView: View {
 
                     Spacer()
 
-                    // Expand button
-                    Button {
-                        showFullPreview = true
-                    } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(6)
-                            .background(Color.primary.opacity(0.05))
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
+                    // Buttons
+                    HStack(spacing: 8) {
+                        // Expand button
+                        Button {
+                            showFullPreview = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(6)
+                                .background(Color.primary.opacity(0.05))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.borderless)
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        // Chevron
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
                 }
                 .padding(12)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(10)
             }
             .buttonStyle(.plain)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
 
             // Expanded preview
             if isExpanded {
@@ -1452,7 +1590,8 @@ struct InlineArtifactView: View {
                     error: .constant(nil)
                 )
                 .frame(height: 300)
-                .cornerRadius(10)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .padding(.top, 8)
             }
         }

@@ -53,18 +53,21 @@ struct OnboardingView: View {
                 // Top bar with skip button
                 topBar
 
-                // Page content
-                pageContent
-                    .frame(maxWidth: 700)
-                    .padding(.horizontal, 40)
+                // Page content (no ScrollView - window is tall enough)
+                VStack {
+                    Spacer(minLength: 20)
+                    
+                    pageContent
+                        .frame(maxWidth: 700)
+                        .padding(.horizontal, 40)
+                    
+                    Spacer(minLength: 20)
+                }
 
-                Spacer()
-
-                // Progress indicator + navigation
+                // Fixed bottom navigation (always visible)
                 bottomNavigation
             }
         }
-        .frame(minWidth: 800, minHeight: 600)
         .onAppear {
             if !reduceMotion {
                 withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
@@ -106,7 +109,7 @@ struct OnboardingView: View {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [Color(hex: "5a9bd5").opacity(0.1), Color.clear],
+                            colors: [ProviderColors.gemini.opacity(0.1), Color.clear],
                             center: .center,
                             startRadius: 0,
                             endRadius: 250
@@ -183,14 +186,12 @@ struct OnboardingView: View {
 
     private var welcomePage: some View {
         VStack(spacing: 32) {
-            Spacer()
-
             // App icon with glow
             OnboardingAppIcon()
 
             VStack(spacing: 16) {
                 Text("Welcome to Vaizor")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .font(VaizorTypography.displayXLarge)
                     .foregroundStyle(textPrimary)
 
                 Text("Your AI assistant with superpowers")
@@ -205,8 +206,6 @@ struct OnboardingView: View {
                 WelcomeFeaturePill(icon: "bolt", text: "Fast")
             }
             .padding(.top, 20)
-
-            Spacer()
         }
         .onboardingPageAnimation(reduceMotion: reduceMotion)
     }
@@ -214,16 +213,14 @@ struct OnboardingView: View {
     // MARK: - Connect AI Page
 
     private var connectAIPage: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
+        VStack(spacing: 28) {
             VStack(spacing: 12) {
                 Image(systemName: "cpu")
-                    .font(.system(size: 48, weight: .light))
+                    .font(VaizorTypography.displayHeroLight)
                     .foregroundStyle(accent)
 
                 Text("Connect Your AI")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(VaizorTypography.displayLarge)
                     .foregroundStyle(textPrimary)
 
                 Text("Choose your preferred AI provider")
@@ -271,8 +268,6 @@ struct OnboardingView: View {
             Text("You can add API keys later in Settings")
                 .font(.system(size: 13))
                 .foregroundStyle(textSecondary.opacity(0.7))
-
-            Spacer()
         }
         .onboardingPageAnimation(reduceMotion: reduceMotion)
     }
@@ -280,16 +275,14 @@ struct OnboardingView: View {
     // MARK: - Features Page
 
     private var featuresPage: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
+        VStack(spacing: 28) {
             VStack(spacing: 12) {
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 48, weight: .light))
+                    .font(VaizorTypography.displayHeroLight)
                     .foregroundStyle(accent)
 
                 Text("Discover Features")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(VaizorTypography.displayLarge)
                     .foregroundStyle(textPrimary)
 
                 Text("Powerful tools at your fingertips")
@@ -303,21 +296,21 @@ struct OnboardingView: View {
                     icon: "at",
                     title: "@Mentions",
                     description: "Reference files and folders directly in your chat",
-                    color: Color(hex: "5a9bd5")
+                    color: ProviderColors.gemini
                 )
 
                 FeatureCard(
                     icon: "folder.badge.gearshape",
                     title: "Projects",
                     description: "Persistent memory across conversations",
-                    color: Color(hex: "9c7bea")
+                    color: ProviderColors.ollama
                 )
 
                 FeatureCard(
                     icon: "globe",
                     title: "Browser Control",
                     description: "Automate web tasks with AI assistance",
-                    color: Color(hex: "d4a017")
+                    color: ProviderColors.claude
                 )
 
                 FeatureCard(
@@ -334,43 +327,41 @@ struct OnboardingView: View {
                 Button {
                     showMCPDiscovery = true
                 } label: {
-                    HStack(spacing: 12) {
+                    HStack(spacing: VaizorSpacing.sm) {
                         Image(systemName: "puzzlepiece.extension")
                             .font(.system(size: 20))
-                            .foregroundStyle(Color(hex: "9c7bea"))
+                            .foregroundStyle(ProviderColors.ollama)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("MCP Servers Found")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(VaizorTypography.label.weight(.semibold))
                                 .foregroundStyle(textPrimary)
                             Text("We found \(discoveredMCPServers.count) MCP server\(discoveredMCPServers.count == 1 ? "" : "s") on your system")
-                                .font(.system(size: 12))
+                                .font(VaizorTypography.caption)
                                 .foregroundStyle(textSecondary)
                         }
 
                         Spacer()
 
                         Text("Import")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(VaizorTypography.caption.weight(.medium))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color(hex: "9c7bea"))
-                            .cornerRadius(6)
+                            .padding(.horizontal, VaizorSpacing.sm)
+                            .padding(.vertical, VaizorSpacing.xxs + 2)
+                            .background(ProviderColors.ollama)
+                            .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusSm, style: .continuous))
                     }
-                    .padding(16)
-                    .background(Color(hex: "9c7bea").opacity(0.1))
-                    .cornerRadius(12)
+                    .padding(VaizorSpacing.md)
+                    .background(ProviderColors.ollama.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: VaizorSpacing.radiusLg, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(hex: "9c7bea").opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: VaizorSpacing.radiusLg, style: .continuous)
+                            .stroke(ProviderColors.ollama.opacity(0.3), lineWidth: 1)
                     )
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 20)
             }
-
-            Spacer()
         }
         .onboardingPageAnimation(reduceMotion: reduceMotion)
     }
@@ -378,9 +369,7 @@ struct OnboardingView: View {
     // MARK: - Security Page
 
     private var securityPage: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
+        VStack(spacing: 28) {
             // Shield icon with animation
             ZStack {
                 Circle()
@@ -394,7 +383,7 @@ struct OnboardingView: View {
 
             VStack(spacing: 12) {
                 Text("Security First")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(VaizorTypography.displayLarge)
                     .foregroundStyle(textPrimary)
 
                 Text("Your conversations are protected")
@@ -429,8 +418,6 @@ struct OnboardingView: View {
                 )
             }
             .padding(.horizontal, 20)
-
-            Spacer()
         }
         .onboardingPageAnimation(reduceMotion: reduceMotion)
     }
@@ -438,9 +425,7 @@ struct OnboardingView: View {
     // MARK: - Ready Page
 
     private var readyPage: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
+        VStack(spacing: 28) {
             // Checkmark animation
             ZStack {
                 Circle()
@@ -454,7 +439,7 @@ struct OnboardingView: View {
 
             VStack(spacing: 12) {
                 Text("You're All Set!")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .font(VaizorTypography.displayLarge)
                     .foregroundStyle(textPrimary)
 
                 Text("Start chatting with your AI assistant")
@@ -483,8 +468,6 @@ struct OnboardingView: View {
                 )
             }
             .padding(.horizontal, 20)
-
-            Spacer()
         }
         .onboardingPageAnimation(reduceMotion: reduceMotion)
     }
@@ -615,10 +598,10 @@ enum AIProvider: String, CaseIterable {
 
     var color: Color {
         switch self {
-        case .claude: return Color(hex: "d4a017")
-        case .openai: return Color(hex: "10a37f")
-        case .gemini: return Color(hex: "5a9bd5")
-        case .ollama: return Color(hex: "9c7bea")
+        case .claude: return ProviderColors.claude
+        case .openai: return ProviderColors.openai
+        case .gemini: return ProviderColors.gemini
+        case .ollama: return ProviderColors.ollama
         }
     }
 }
@@ -929,40 +912,42 @@ struct ParticleEmitterView: View {
 // MARK: - Button Styles
 
 struct OnboardingPrimaryButtonStyle: ButtonStyle {
-    @State private var isPressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .semibold))
+            .font(VaizorTypography.buttonLarge)
             .foregroundStyle(.white)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 14)
+            .padding(.horizontal, VaizorSpacing.xl)
+            .padding(.vertical, VaizorSpacing.sm + 2)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusLg, style: .continuous)
                     .fill(ThemeColors.accent)
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
 struct OnboardingSecondaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .medium))
+            .font(VaizorTypography.label)
             .foregroundStyle(ThemeColors.textSecondary)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.horizontal, VaizorSpacing.lg - 4)
+            .padding(.vertical, VaizorSpacing.xs + 2)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: VaizorSpacing.radiusMd, style: .continuous)
                     .fill(ThemeColors.darkSurface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: VaizorSpacing.radiusMd, style: .continuous)
                             .stroke(ThemeColors.darkBorder, lineWidth: 1)
                     )
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+            .animation(reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

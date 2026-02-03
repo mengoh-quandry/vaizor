@@ -112,7 +112,8 @@ class OllamaProvider: LLMProviderProtocol, @unchecked Sendable {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (String) -> Void,
         onThinkingStatusUpdate: @escaping @Sendable (String) -> Void,
-        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil
+        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil,
+        onToolCallUpdate: (@Sendable (ToolCallUpdateEvent) -> Void)? = nil
     ) async throws {
         let baseURL = await getBaseURL()
         guard let url = URL(string: "\(baseURL)/api/chat") else {
@@ -1125,7 +1126,8 @@ class AnthropicProvider: LLMProviderProtocol, @unchecked Sendable {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (String) -> Void,
         onThinkingStatusUpdate: @escaping @Sendable (String) -> Void,
-        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil
+        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil,
+        onToolCallUpdate: (@Sendable (ToolCallUpdateEvent) -> Void)? = nil
     ) async throws {
         guard let url = URL(string: baseURL) else {
             throw NSError(domain: "AnthropicProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid Anthropic API URL"])
@@ -1305,7 +1307,8 @@ class GeminiProvider: LLMProviderProtocol, @unchecked Sendable {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (String) -> Void,
         onThinkingStatusUpdate: @escaping @Sendable (String) -> Void,
-        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil
+        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil,
+        onToolCallUpdate: (@Sendable (ToolCallUpdateEvent) -> Void)? = nil
     ) async throws {
         let model = configuration.model.isEmpty ? "gemini-pro" : configuration.model
         guard let url = URL(string: "\(baseURL)/models/\(model):streamGenerateContent?key=\(apiKey)&alt=sse") else {
@@ -1420,7 +1423,8 @@ class OpenAIProvider: LLMProviderProtocol, @unchecked Sendable {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (String) -> Void,
         onThinkingStatusUpdate: @escaping @Sendable (String) -> Void,
-        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil
+        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil,
+        onToolCallUpdate: (@Sendable (ToolCallUpdateEvent) -> Void)? = nil
     ) async throws {
         guard let url = URL(string: baseURL) else {
             throw NSError(domain: "OpenAIProvider", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid OpenAI API URL"])

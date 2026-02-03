@@ -449,7 +449,6 @@ struct WebPreviewWebView: NSViewRepresentable {
         }
         let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
         possiblePaths.append(cwd.appendingPathComponent("Resources/js"))
-        possiblePaths.append(URL(fileURLWithPath: "/Users/marcus/Downloads/vaizor/Resources/js"))
 
         for path in possiblePaths {
             if fileManager.fileExists(atPath: path.appendingPathComponent("react.min.js").path) {

@@ -4,6 +4,7 @@ struct ProjectSidebarView: View {
     @ObservedObject var projectManager: ProjectManager
     @ObservedObject var conversationManager: ConversationManager
     @State private var showCreateProject = false
+    @State private var showProjectIngestion = false
     @State private var searchText = ""
     @State private var selectedProjectId: UUID?
     @Binding var showProjectSettings: Bool
@@ -18,6 +19,16 @@ struct ProjectSidebarView: View {
                     .foregroundStyle(.primary)
 
                 Spacer()
+
+                Button {
+                    showProjectIngestion = true
+                } label: {
+                    Image(systemName: "folder.badge.gearshape")
+                        .font(.system(size: 14))
+                        .foregroundStyle(ThemeColors.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Ingest local project")
 
                 Button {
                     showCreateProject = true
@@ -121,6 +132,10 @@ struct ProjectSidebarView: View {
                 isPresented: $showCreateProject,
                 projectManager: projectManager
             )
+        }
+        .sheet(isPresented: $showProjectIngestion) {
+            ProjectIngestionView(isPresented: $showProjectIngestion)
+                .frame(minWidth: 700, minHeight: 550)
         }
     }
 

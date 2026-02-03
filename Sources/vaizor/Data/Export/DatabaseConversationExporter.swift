@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 import ZIPFoundation
 
-final class ConversationExporter {
+final class DatabaseConversationExporter {
     private let dbQueue: DatabaseQueue
 
     init(dbQueue: DatabaseQueue = DatabaseManager.shared.dbQueue) {

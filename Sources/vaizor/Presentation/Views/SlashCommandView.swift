@@ -219,7 +219,7 @@ struct CommandRow: View {
     @State private var isHovered = false
 
     private var iconColor: Color {
-        command.category == .native ? .blue : Color(hex: "00976d")
+        command.category == .native ? .blue : ThemeColors.accent
     }
 
     var body: some View {
@@ -257,12 +257,12 @@ struct CommandRow: View {
                 if command.category == .mcp {
                     Text("MCP")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color(hex: "00976d"))
+                        .foregroundStyle(ThemeColors.accent)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(
                             Capsule()
-                                .fill(Color(hex: "00976d").opacity(0.12))
+                                .fill(ThemeColors.accent.opacity(0.12))
                         )
                 }
             }

@@ -34,6 +34,8 @@ class DependencyContainer: ObservableObject {
     }
     @Published var mcpManager = MCPServerManager()
     @Published var projectManager = ProjectManager()
+    @Published var browserAutomation = BrowserAutomation()
+    @Published var agentService = AgentService()
     /// Published error state for surfacing provider errors to the UI
     @Published var lastProviderError: Error?
 
@@ -295,7 +297,8 @@ class PlaceholderLLMProvider: LLMProviderProtocol, @unchecked Sendable {
         conversationHistory: [Message],
         onChunk: @escaping @Sendable (String) -> Void,
         onThinkingStatusUpdate: @escaping @Sendable (String) -> Void,
-        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil
+        onArtifactCreated: (@Sendable (Artifact) -> Void)? = nil,
+        onToolCallUpdate: (@Sendable (ToolCallUpdateEvent) -> Void)? = nil
     ) async throws {
         throw error
     }

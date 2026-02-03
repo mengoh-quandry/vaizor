@@ -3,6 +3,13 @@ import AppKit
 
 struct ThinkingIndicator: View {
     let status: String
+    let provider: LLMProvider?
+
+    init(status: String, provider: LLMProvider? = nil) {
+        self.status = status
+        self.provider = provider
+    }
+
     @State private var glowPhase: Double = 0
     @State private var hasAppeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -52,46 +59,42 @@ struct ThinkingIndicator: View {
     // MARK: - Avatar with Animated Glow Ring
 
     private var avatarWithGlow: some View {
+        // Tahoe-style: Refined avatar with subtle pulse
         ZStack {
-            // Animated glow ring
+            // Animated glow ring - more subtle
             if !reduceMotion {
                 Circle()
-                    .stroke(thinkingColor.opacity(0.3), lineWidth: 2)
-                    .scaleEffect(1 + glowPhase * 0.15)
+                    .stroke(thinkingColor.opacity(0.25), lineWidth: 1.5)
+                    .scaleEffect(1 + glowPhase * 0.12)
                     .opacity(1 - glowPhase)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 34)
             }
 
-            // Second glow ring (offset phase)
-            if !reduceMotion {
-                Circle()
-                    .stroke(thinkingColor.opacity(0.2), lineWidth: 1.5)
-                    .scaleEffect(1 + (glowPhase + 0.5).truncatingRemainder(dividingBy: 1.0) * 0.15)
-                    .opacity(1 - (glowPhase + 0.5).truncatingRemainder(dividingBy: 1.0))
-                    .frame(width: 36, height: 36)
-            }
-
-            // Main avatar circle
+            // Main avatar circle - cleaner gradient
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [thinkingColor.opacity(0.25), thinkingColor.opacity(0.15)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                .fill(thinkingColor.opacity(0.18))
+                .frame(width: 30, height: 30)
+                .overlay(
+                    Circle()
+                        .stroke(colors.border, lineWidth: 0.5)
                 )
-                .frame(width: 36, height: 36)
 
-            // Icon
-            if let vaizorImage = loadVaizorIcon() {
+            // Icon - use provider icon if available, fallback to sparkles
+            if let provider = provider {
+                ProviderIconManager.icon(for: provider)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
+                    .clipShape(Circle())
+            } else if let vaizorImage = loadVaizorIcon() {
                 Image(nsImage: vaizorImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 22, height: 22)
                     .clipShape(Circle())
             } else {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(thinkingColor)
                     .symbolRenderingMode(.hierarchical)
                     .symbolEffect(.pulse)
@@ -99,7 +102,7 @@ struct ThinkingIndicator: View {
         }
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) {
                 glowPhase = 1.0
             }
         }
@@ -160,8 +163,7 @@ struct ThinkingIndicator: View {
             Bundle.main.bundlePath + "/../../Resources/Icons/Vaizor.png",
             Bundle.main.bundlePath + "/Resources/Icons/Vaizor.png",
             Bundle.main.resourcePath.map { $0 + "/Resources/Icons/Vaizor.png" },
-            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/Vaizor.png" },
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/Vaizor.png"
+            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/Vaizor.png" }
         ].compactMap { $0 }
 
         for path in possiblePaths {

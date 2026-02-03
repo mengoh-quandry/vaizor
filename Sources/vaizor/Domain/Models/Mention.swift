@@ -259,6 +259,19 @@ struct ResolvedMention {
     }
 }
 
+extension Mention {
+    /// Create a Mention from a MentionReference (for edit/regenerate scenarios)
+    init(from reference: MentionReference) {
+        self.id = reference.id
+        self.type = reference.type
+        self.value = reference.value
+        self.displayName = reference.displayName
+        self.resolvedContent = nil  // Content needs to be re-resolved if needed
+        self.tokenCount = reference.tokenCount
+        self.range = nil
+    }
+}
+
 /// Context that will be injected into the message
 struct MentionContext: Codable {
     let mentions: [Mention]

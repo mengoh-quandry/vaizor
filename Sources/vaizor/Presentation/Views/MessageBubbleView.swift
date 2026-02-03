@@ -11,6 +11,7 @@ struct MessageBubbleView: View {
     let onRegenerate: (() -> Void)?
     let onRegenerateDifferent: (() -> Void)?
     let onScrollToTop: (() -> Void)?
+    let onRetryToolCall: ((UUID, String, String) -> Void)?
     let animationIndex: Int
     let shouldAnimateAppear: Bool
 
@@ -24,6 +25,7 @@ struct MessageBubbleView: View {
         onRegenerate: (() -> Void)? = nil,
         onRegenerateDifferent: (() -> Void)? = nil,
         onScrollToTop: (() -> Void)? = nil,
+        onRetryToolCall: ((UUID, String, String) -> Void)? = nil,
         animationIndex: Int = 0,
         shouldAnimateAppear: Bool = true
     ) {
@@ -36,6 +38,7 @@ struct MessageBubbleView: View {
         self.onRegenerate = onRegenerate
         self.onRegenerateDifferent = onRegenerateDifferent
         self.onScrollToTop = onScrollToTop
+        self.onRetryToolCall = onRetryToolCall
         self.animationIndex = animationIndex
         self.shouldAnimateAppear = shouldAnimateAppear
     }
@@ -47,6 +50,7 @@ struct MessageBubbleView: View {
     @State private var appearOffset: CGFloat = 8
     @State private var appearOpacity: Double = 0
     @State private var appearScale: CGFloat = 0.95
+    @State private var toolRuns: [ToolRun] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -62,8 +66,11 @@ struct MessageBubbleView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: VaizorSpacing.sm) {
+            // Left spacer for user messages - 25% minimum to constrain width
             if message.role == .user {
-                Spacer(minLength: 60)
+                Spacer(minLength: 0)
+                    .frame(minWidth: 0, maxWidth: .infinity)
+                    .layoutPriority(-1)
             }
 
             // Avatar
@@ -73,6 +80,16 @@ struct MessageBubbleView: View {
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: VaizorSpacing.xs) {
                 VStack(alignment: .leading, spacing: VaizorSpacing.xs) {
+                    // Tool calls for this message (assistant messages only)
+                    if message.role == .assistant && !toolRuns.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(toolRuns) { toolRun in
+                                CollapsibleToolCallView(toolRun: toolRun, onRetry: onRetryToolCall)
+                            }
+                        }
+                        .padding(.bottom, 8)
+                    }
+
                     // Mention references (for user messages)
                     if let refs = message.mentionReferences, !refs.isEmpty {
                         MessageMentionReferencesView(references: refs)
@@ -96,10 +113,7 @@ struct MessageBubbleView: View {
                 }
                 .padding(.horizontal, VaizorSpacing.md)
                 .padding(.vertical, VaizorSpacing.sm)
-                .background(bubbleBackground)
-                .overlay(bubbleBorderOverlay)
-                .cornerRadius(VaizorSpacing.bubbleRadius)
-                .shadow(color: shadowColor, radius: shadowRadius, y: shadowY)
+                // Clean design: No background or border on bubbles
                 .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement(children: .combine)
@@ -110,23 +124,23 @@ struct MessageBubbleView: View {
 
                 MessageTimestampView(timestamp: message.timestamp)
                     .padding(.horizontal, VaizorSpacing.xxs)
-                
-                // Action row (shown on hover)
-                if isHovered {
-                    MessageActionRow(
-                        message: message,
-                        isUser: message.role == .user,
-                        isPromptEnhanced: isPromptEnhanced && message.role == .user,
-                        onCopy: { onCopy?() },
-                        onEdit: message.role == .user ? onEdit : nil,
-                        onDelete: { onDelete?() },
-                        onRegenerate: message.role == .assistant ? onRegenerate : nil,
-                        onRegenerateDifferent: message.role == .assistant ? onRegenerateDifferent : nil,
-                        onScrollToTop: message.role == .assistant ? onScrollToTop : nil
-                    )
-                    .transition(.opacity.combined(with: .scale))
-                }
+
+                // Action row - always present but hidden until hover (prevents layout shift)
+                MessageActionRow(
+                    message: message,
+                    isUser: message.role == .user,
+                    isPromptEnhanced: isPromptEnhanced && message.role == .user,
+                    onCopy: { onCopy?() },
+                    onEdit: message.role == .user ? onEdit : nil,
+                    onDelete: { onDelete?() },
+                    onRegenerate: message.role == .assistant ? onRegenerate : nil,
+                    onRegenerateDifferent: message.role == .assistant ? onRegenerateDifferent : nil,
+                    onScrollToTop: message.role == .assistant ? onScrollToTop : nil
+                )
+                .opacity(isHovered ? 1 : 0)
             }
+            // Constrain message width to ~75% of container
+            .frame(maxWidth: 800)
             .onHover { hovering in
                 // Cancel any pending hover task immediately
                 hoverTask?.cancel()
@@ -167,8 +181,11 @@ struct MessageBubbleView: View {
                 avatarView
             }
 
+            // Right spacer for assistant messages - 25% minimum to constrain width
             if message.role == .assistant || message.role == .system || message.role == .tool {
-                Spacer(minLength: 60)
+                Spacer(minLength: 0)
+                    .frame(minWidth: 0, maxWidth: .infinity)
+                    .layoutPriority(-1)
             }
         }
         // Premium appear animation
@@ -193,6 +210,12 @@ struct MessageBubbleView: View {
                 appearOffset = 0
             }
         }
+        .task {
+            // Load tool runs for assistant messages
+            guard message.role == .assistant else { return }
+            let repository = ToolRunRepository()
+            toolRuns = await repository.loadToolRuns(for: message.id)
+        }
     }
 
     @ViewBuilder
@@ -202,35 +225,41 @@ struct MessageBubbleView: View {
             Bundle.main.bundlePath + "/../../Resources/Icons/ollama.jpeg",
             Bundle.main.bundlePath + "/Resources/Icons/ollama.jpeg",
             Bundle.main.resourcePath.map { $0 + "/Resources/Icons/ollama.jpeg" },
-            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/ollama.jpeg" },
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/ollama.jpeg"
+            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/ollama.jpeg" }
         ].compactMap { $0 }
-        
+
         if let ollamaPath = possiblePaths.first(where: { fileManager.fileExists(atPath: $0) }),
            let nsImage = NSImage(contentsOfFile: ollamaPath) {
             Image(nsImage: nsImage)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 32, height: 32)
+                .frame(width: 30, height: 30)
                 .clipShape(Circle())
         } else {
-            // Fallback to Vaizor green sparkles icon
+            // Fallback to system icon
             Image(systemName: "sparkles")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Color(hex: "00976d"))
-                .frame(width: 32, height: 32)
+                .font(.system(size: 16, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(colors.accent)
+                .frame(width: 30, height: 30)
         }
     }
     
     private var avatarView: some View {
         ZStack {
+            // Tahoe-style: Subtle background with refined shape
             Circle()
                 .fill(avatarBackgroundColor)
-                .frame(width: 32, height: 32)
+                .frame(width: 30, height: 30)
+                .overlay(
+                    Circle()
+                        .stroke(colors.border, lineWidth: 0.5)
+                )
 
             if message.role == .user {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 14, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(avatarForegroundColor)
             } else if message.role == .assistant {
                 // Use provider-specific icon if available
@@ -242,19 +271,21 @@ struct MessageBubbleView: View {
                         ProviderIconManager.icon(for: provider)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 30, height: 30)
                             .clipShape(Circle())
                     }
                 } else {
-                    // Default Vaizor green icon for unknown models
+                    // Default icon for unknown models
                     Image(systemName: "sparkles")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Color(hex: "00976d"))
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 16, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(colors.accent)
+                        .frame(width: 30, height: 30)
                 }
             } else {
                 Image(systemName: avatarIcon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 14, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(avatarForegroundColor)
             }
         }
@@ -307,24 +338,18 @@ struct MessageBubbleView: View {
     private var bubbleBackground: some View {
         switch message.role {
         case .user:
-            // Light green tint - adapts to color scheme
-            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                .fill(
-                    LinearGradient(
-                        colors: [colors.userBubble, colors.userBubble.opacity(colorScheme == .dark ? 0.8 : 1.0)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            // Tahoe-style: subtle accent tint with continuous corners
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                .fill(colors.userBubble)
         case .assistant:
-            // White in light mode, card gradient in dark mode
-            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                .fill(colors.cardGradient)
+            // Tahoe-style: clean surface with subtle material effect
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                .fill(colors.surface)
         case .system:
-            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
                 .fill(colors.systemBubble)
         case .tool:
-            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [colors.toolBackground, colors.toolBackground.opacity(0.7)],
@@ -337,102 +362,64 @@ struct MessageBubbleView: View {
 
     @ViewBuilder
     private var bubbleBorderOverlay: some View {
+        // Tahoe-style: Clean, minimal borders with subtle hover states
         switch message.role {
         case .user:
-            // Subtle border with glow on hover - adapts to color scheme
             ZStack {
-                RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
+                // Base border - subtle accent tint
+                RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
                     .stroke(colors.userBubbleBorder, lineWidth: 1)
-                // Top highlight (light source from above) - only in dark mode
-                if colorScheme == .dark {
-                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                        .stroke(ThemeColors.borderHighlight, lineWidth: 0.5)
-                        .mask(
-                            LinearGradient(
-                                colors: [.white, .clear],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                }
-                // Hover glow
+                // Hover glow - refined
                 if isHovered {
-                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                        .stroke(colors.accent.opacity(0.6), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                        .stroke(colors.accent.opacity(0.5), lineWidth: 1.5)
                 }
             }
         case .assistant:
             ZStack {
-                // Top highlight - only in dark mode
-                if colorScheme == .dark {
-                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                        .stroke(ThemeColors.borderHighlight, lineWidth: 0.5)
-                        .mask(
-                            LinearGradient(
-                                colors: [.white, .clear],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                }
-                // Subtle border - more visible in light mode
-                RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                    .stroke(colors.border, lineWidth: colorScheme == .light ? 1 : 0.5)
-                // Hover glow
+                // Subtle border
+                RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                    .stroke(colors.border, lineWidth: 1)
+                // Hover state
                 if isHovered {
-                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                        .stroke(colors.accent.opacity(0.4), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                        .stroke(colors.accent.opacity(0.35), lineWidth: 1)
                 }
             }
         case .system:
-            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
                 .stroke(colors.border, lineWidth: 0.5)
         case .tool:
-            ZStack {
-                RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                    .stroke(colors.toolAccent.opacity(0.25), lineWidth: 1)
-                // Top highlight - only in dark mode
-                if colorScheme == .dark {
-                    RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius)
-                        .stroke(ThemeColors.borderHighlight, lineWidth: 0.5)
-                        .mask(
-                            LinearGradient(
-                                colors: [.white, .clear],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                }
-            }
+            RoundedRectangle(cornerRadius: VaizorSpacing.bubbleRadius, style: .continuous)
+                .stroke(colors.toolAccent.opacity(0.30), lineWidth: 1)
         }
     }
 
     private var shadowColor: Color {
-        // Shadows are more prominent in light mode
+        // Tahoe-style: Very subtle shadows, slightly more visible on hover
         switch message.role {
         case .user:
-            return isHovered ? colors.accent.opacity(colorScheme == .light ? 0.2 : 0.3) : colors.shadowLight
+            return isHovered ? colors.accent.opacity(0.15) : colors.shadowLight
         case .assistant:
             return isHovered ? colors.shadowMedium : colors.shadowLight
         case .system:
-            return colors.shadowLight.opacity(0.5)
+            return .clear
         case .tool:
-            return colors.shadowLight
+            return colors.shadowLight.opacity(0.5)
         }
     }
 
     private var shadowRadius: CGFloat {
-        // More prominent shadows in light mode
-        let baseMultiplier: CGFloat = colorScheme == .light ? 1.5 : 1.0
+        // Tahoe-style: Softer, more diffuse shadows
         switch message.role {
         case .user:
-            return (isHovered ? 8 : 4) * baseMultiplier
+            return isHovered ? 12 : 6
         case .assistant:
-            return (isHovered ? 8 : 4) * baseMultiplier
+            return isHovered ? 10 : 4
         case .system:
-            return 2 * baseMultiplier
+            return 0
         case .tool:
-            return 3 * baseMultiplier
+            return 3
         }
     }
 

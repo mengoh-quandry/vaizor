@@ -13,10 +13,10 @@ struct MCPAppInlineView: View {
     @State private var isExpanded = false
     @ObservedObject private var appManager = MCPAppManager.shared
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
-    private let accent = Color(hex: "00976d")
-    private let textSecondary = Color(hex: "808080")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
+    private let accent = ThemeColors.accent
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(spacing: 0) {
@@ -190,10 +190,10 @@ struct ActiveMCPAppsView: View {
     @ObservedObject private var appManager = MCPAppManager.shared
     @State private var selectedAppId: UUID?
 
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
-    private let accent = Color(hex: "00976d")
-    private let textSecondary = Color(hex: "808080")
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
+    private let accent = ThemeColors.accent
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         VStack(spacing: 0) {
@@ -261,9 +261,9 @@ struct AppListRow: View {
     let onSelect: () -> Void
     let onClose: () -> Void
 
-    private let darkSurface = Color(hex: "232426")
-    private let accent = Color(hex: "00976d")
-    private let textSecondary = Color(hex: "808080")
+    private let darkSurface = ThemeColors.darkSurface
+    private let accent = ThemeColors.accent
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         Button {
@@ -335,5 +335,5 @@ struct AppListRow: View {
             .frame(width: 300, height: 300)
     }
     .padding()
-    .background(Color(hex: "1c1d1f"))
+    .background(ThemeColors.darkBase)
 }

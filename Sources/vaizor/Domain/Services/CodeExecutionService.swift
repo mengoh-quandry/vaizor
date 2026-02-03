@@ -21,6 +21,7 @@ class CodeExecutionService {
     private init() {
         // Initialize runtime adapters
         runtimeAdapters[.python] = PythonRuntimeAdapter()
+        runtimeAdapters[.javascript] = JavaScriptRuntimeAdapter()
 
         // Initialize shell adapters
         for shell in ShellType.allCases {
@@ -32,8 +33,20 @@ class CodeExecutionService {
         runtimeAdapters[.zsh] = shellAdapters[.zsh]
         runtimeAdapters[.powershell] = shellAdapters[.powershell]
 
-        AppLogger.shared.log("CodeExecutionService initialized with shell support", level: .info)
+        AppLogger.shared.log("CodeExecutionService initialized with shell and JS support", level: .info)
         logShellAvailability()
+        logRuntimeAvailability()
+    }
+
+    /// Log available runtimes for debugging
+    private func logRuntimeAvailability() {
+        if let jsAdapter = runtimeAdapters[.javascript] as? JavaScriptRuntimeAdapter {
+            if jsAdapter.isAvailable {
+                AppLogger.shared.log("JavaScript (Node.js) runtime available", level: .info)
+            } else {
+                AppLogger.shared.log("JavaScript (Node.js) runtime not found - install with: brew install node", level: .warning)
+            }
+        }
     }
 
     /// Log available shells for debugging

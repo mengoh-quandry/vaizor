@@ -16,7 +16,8 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.0.0"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.29.0"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.2.2"),
-        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.0")
+        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.0"),
+        .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.21.0")
     ],
     targets: [
         .executableTarget(
@@ -25,7 +26,8 @@ let package = Package(
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "KeychainAccess", package: "KeychainAccess"),
-                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+                .product(name: "PostgresNIO", package: "postgres-nio")
             ],
             path: "Sources/vaizor",
             resources: [

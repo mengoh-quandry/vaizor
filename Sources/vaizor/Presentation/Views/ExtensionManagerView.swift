@@ -11,13 +11,13 @@ struct ExtensionManagerView: View {
     @State private var showPermissionReview: MCPExtension?
     @State private var showRuntimeWarning: ExtensionRuntime?
 
-    // Dark theme colors
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
-    private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    // Dark theme colors - Using ThemeColors
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
+    private let textPrimary = ThemeColors.textPrimary
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 0) {
@@ -544,11 +544,11 @@ struct ExtensionCard: View {
     let onUninstall: () -> Void
     let onUpdate: () -> Void
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -662,10 +662,10 @@ struct FeaturedExtensionCard: View {
     let isInstalled: Bool
     let onInstall: () -> Void
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -740,11 +740,11 @@ struct InstalledExtensionRow: View {
         _isEnabled = State(initialValue: installed.isEnabled)
     }
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
+    private let darkSurface = ThemeColors.darkSurface
+    private let darkBorder = ThemeColors.darkBorder
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         HStack(spacing: 12) {
@@ -832,10 +832,10 @@ struct UpdateExtensionRow: View {
     let availableVersion: String
     let onUpdate: () -> Void
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         HStack(spacing: 12) {
@@ -898,11 +898,11 @@ struct PermissionReviewSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private let darkBase = Color(hex: "1c1d1f")
-    private let darkSurface = Color(hex: "232426")
+    private let darkBase = ThemeColors.darkBase
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1014,9 +1014,9 @@ struct PermissionReviewSheet: View {
 struct PermissionRow: View {
     let permission: ExtensionPermission
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -1076,7 +1076,7 @@ struct ExtensionEmptyStateIllustration: View {
     @State private var isAnimating = false
     @State private var pulseScale: CGFloat = 1.0
 
-    private let accent = Color(hex: "00976d")
+    private let accent = ThemeColors.accent
 
     var body: some View {
         ZStack {
@@ -1137,9 +1137,9 @@ struct ExtensionBenefitRow: View {
     let description: String
     let color: Color
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    private let textSecondary = ThemeColors.textSecondary
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1179,10 +1179,10 @@ struct EmptyBrowseStateView: View {
     let searchQuery: String
     let onClearSearch: () -> Void
 
-    private let darkSurface = Color(hex: "232426")
+    private let darkSurface = ThemeColors.darkSurface
     private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
-    private let accent = Color(hex: "00976d")
+    private let textSecondary = ThemeColors.textSecondary
+    private let accent = ThemeColors.accent
 
     var body: some View {
         VStack(spacing: 24) {
@@ -1247,12 +1247,12 @@ struct SuggestionBullet: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(Color(hex: "808080").opacity(0.5))
+                .fill(ThemeColors.textSecondary.opacity(0.5))
                 .frame(width: 4, height: 4)
 
             Text(text)
                 .font(.system(size: 11))
-                .foregroundStyle(Color(hex: "808080"))
+                .foregroundStyle(ThemeColors.textSecondary)
         }
     }
 }
@@ -1269,5 +1269,5 @@ struct SuggestionBullet: View {
         ExtensionEmptyStateIllustration()
     }
     .frame(width: 300, height: 300)
-    .background(Color(hex: "1c1d1f"))
+    .background(ThemeColors.darkBase)
 }

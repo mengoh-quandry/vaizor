@@ -1,246 +1,304 @@
 import SwiftUI
 
+// MARK: - macOS Tahoe Design System
+// Following Apple Human Interface Guidelines for macOS 26+
+// Emphasizes: Liquid glass effects, continuous corners, refined materials, semantic colors
+
+// MARK: - Provider Colors (AI Model Providers)
+
+/// Standardized colors for AI provider branding
+enum ProviderColors {
+    static let claude = Color(hex: "d4a017")      // Amber/Gold
+    static let anthropic = Color(hex: "d4a017")   // Same as Claude
+    static let openai = Color(hex: "10a37f")      // Green
+    static let gemini = Color(hex: "5a9bd5")      // Blue
+    static let ollama = Color(hex: "9c7bea")      // Purple
+
+    /// Get color for a provider by name
+    static func color(for provider: String) -> Color {
+        switch provider.lowercased() {
+        case "claude", "anthropic":
+            return claude
+        case "openai", "gpt", "chatgpt":
+            return openai
+        case "gemini", "google":
+            return gemini
+        case "ollama", "local":
+            return ollama
+        default:
+            return Color.gray
+        }
+    }
+}
+
+// MARK: - Code Syntax Colors
+
+/// Standardized colors for code syntax highlighting
+enum CodeSyntaxColors {
+    static let command = Color(hex: "61afef")     // Blue - commands/functions
+    static let string = Color(hex: "98c379")      // Green - string literals
+    static let variable = Color(hex: "e06c75")    // Red - variables
+    static let comment = Color(hex: "7f848e")     // Gray - comments
+    static let keyword = Color(hex: "c678dd")     // Purple - keywords
+    static let flag = Color(hex: "d19a66")        // Orange - flags/options
+    static let `operator` = Color(hex: "56b6c2")  // Cyan - operators
+    static let number = Color(hex: "d19a66")      // Orange - numbers
+    static let type = Color(hex: "e5c07b")        // Yellow - types
+    static let property = Color(hex: "e06c75")    // Red - properties
+    static let constant = Color(hex: "56b6c2")    // Cyan - constants
+}
+
 // MARK: - Adaptive Theme Colors
 
 /// Adaptive theme colors that respond to system color scheme
-/// Provides comprehensive light and dark mode support for Vaizor
+/// Provides comprehensive light and dark mode support following macOS Tahoe design language
 struct AdaptiveColors {
     let colorScheme: ColorScheme
 
-    // MARK: - Base Colors
+    // MARK: - Base Colors (System-aligned)
 
     var background: Color {
-        colorScheme == .dark ? Color(hex: "1c1d1f") : Color(hex: "ffffff")
+        colorScheme == .dark ? Color(hex: "161617") : Color(hex: "f5f5f7")
     }
 
     var backgroundSecondary: Color {
-        colorScheme == .dark ? Color(hex: "171819") : Color(hex: "fafafa")
+        colorScheme == .dark ? Color(hex: "1c1c1e") : Color(hex: "ffffff")
     }
 
     var surface: Color {
-        colorScheme == .dark ? Color(hex: "232426") : Color(hex: "f5f5f7")
+        colorScheme == .dark ? Color(hex: "2c2c2e") : Color(hex: "ffffff")
     }
 
     var surfaceHover: Color {
-        colorScheme == .dark ? Color(hex: "2a2b2d") : Color(hex: "ebebed")
+        colorScheme == .dark ? Color(hex: "3a3a3c") : Color(hex: "f2f2f7")
     }
 
     var surfacePressed: Color {
-        colorScheme == .dark ? Color(hex: "303133") : Color(hex: "e0e0e2")
+        colorScheme == .dark ? Color(hex: "48484a") : Color(hex: "e5e5ea")
     }
 
     var elevated: Color {
-        colorScheme == .dark ? Color(hex: "2a2b2d") : Color(hex: "ffffff")
+        colorScheme == .dark ? Color(hex: "2c2c2e") : Color(hex: "ffffff")
     }
 
     var border: Color {
-        colorScheme == .dark ? Color(hex: "2d2e30") : Color(hex: "e5e5e5")
+        colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.06)
     }
 
     var borderSubtle: Color {
-        colorScheme == .dark ? Color(hex: "252628") : Color(hex: "eeeeee")
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04)
     }
 
-    // MARK: - Text Colors
+    // MARK: - Text Colors (Semantic)
 
     var textPrimary: Color {
-        colorScheme == .dark ? Color.white : Color(hex: "1d1d1f")
+        colorScheme == .dark ? Color.white.opacity(0.92) : Color(hex: "1d1d1f")
     }
 
     var textSecondary: Color {
-        colorScheme == .dark ? Color(hex: "808080") : Color(hex: "6e6e73")
+        colorScheme == .dark ? Color.white.opacity(0.60) : Color(hex: "86868b")
     }
 
     var textMuted: Color {
-        colorScheme == .dark ? Color(hex: "606060") : Color(hex: "8e8e93")
+        colorScheme == .dark ? Color.white.opacity(0.40) : Color(hex: "aeaeb2")
     }
 
     var textPlaceholder: Color {
-        colorScheme == .dark ? Color(hex: "505050") : Color(hex: "aeaeb2")
+        colorScheme == .dark ? Color.white.opacity(0.30) : Color(hex: "c7c7cc")
     }
 
     var textDisabled: Color {
-        colorScheme == .dark ? Color(hex: "404040") : Color(hex: "c7c7cc")
+        colorScheme == .dark ? Color.white.opacity(0.20) : Color(hex: "d1d1d6")
     }
 
-    // MARK: - Accent Colors
+    // MARK: - Accent Colors (Teal/Emerald)
 
     var accent: Color {
-        colorScheme == .dark ? Color(hex: "00976d") : Color(hex: "00875f")
+        Color(hex: "30d158") // Apple's system green
     }
 
     var accentLight: Color {
-        colorScheme == .dark ? Color(hex: "00b386") : Color(hex: "00a878")
+        colorScheme == .dark ? Color(hex: "32d74b") : Color(hex: "28cd41")
     }
 
     var accentDark: Color {
-        colorScheme == .dark ? Color(hex: "007a58") : Color(hex: "006b4d")
+        colorScheme == .dark ? Color(hex: "28a745") : Color(hex: "1e8e3e")
     }
 
     var accentBackground: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.15) : Color(hex: "00976d").opacity(0.08)
+        colorScheme == .dark ? accent.opacity(0.18) : accent.opacity(0.10)
     }
 
-    // MARK: - Status Colors
+    // MARK: - Status Colors (System-aligned)
 
     var success: Color {
-        colorScheme == .dark ? Color(hex: "00976d") : Color(hex: "00875f")
+        Color(hex: "30d158") // System green
     }
 
     var successBackground: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.15) : Color(hex: "00976d").opacity(0.08)
+        colorScheme == .dark ? success.opacity(0.18) : success.opacity(0.10)
     }
 
     var warning: Color {
-        colorScheme == .dark ? Color(hex: "d4a017") : Color(hex: "c59000")
+        Color(hex: "ffd60a") // System yellow
     }
 
     var warningBackground: Color {
-        colorScheme == .dark ? Color(hex: "d4a017").opacity(0.12) : Color(hex: "d4a017").opacity(0.08)
+        colorScheme == .dark ? warning.opacity(0.15) : warning.opacity(0.12)
     }
 
     var error: Color {
-        colorScheme == .dark ? Color(hex: "c75450") : Color(hex: "d93025")
+        Color(hex: "ff453a") // System red
     }
 
     var errorBackground: Color {
-        colorScheme == .dark ? Color(hex: "c75450").opacity(0.12) : Color(hex: "c75450").opacity(0.06)
+        colorScheme == .dark ? error.opacity(0.15) : error.opacity(0.10)
     }
 
     var info: Color {
-        colorScheme == .dark ? Color(hex: "5a9bd5") : Color(hex: "0066cc")
+        Color(hex: "0a84ff") // System blue
     }
 
     var infoBackground: Color {
-        colorScheme == .dark ? Color(hex: "5a9bd5").opacity(0.12) : Color(hex: "5a9bd5").opacity(0.08)
+        colorScheme == .dark ? info.opacity(0.15) : info.opacity(0.10)
     }
 
     // MARK: - Tool/Code Colors
 
     var toolAccent: Color {
-        colorScheme == .dark ? Color(hex: "d4a017") : Color(hex: "b58900")
+        Color(hex: "ff9f0a") // System orange
     }
 
     var toolBackground: Color {
-        colorScheme == .dark ? Color(hex: "d4a017").opacity(0.08) : Color(hex: "d4a017").opacity(0.06)
+        colorScheme == .dark ? toolAccent.opacity(0.12) : toolAccent.opacity(0.08)
     }
 
     var codeAccent: Color {
-        colorScheme == .dark ? Color(hex: "9c7bea") : Color(hex: "8b5cf6")
+        Color(hex: "bf5af2") // System purple
     }
 
     var codeBackground: Color {
-        colorScheme == .dark ? Color(hex: "9c7bea").opacity(0.1) : Color(hex: "9c7bea").opacity(0.06)
+        colorScheme == .dark ? codeAccent.opacity(0.12) : codeAccent.opacity(0.08)
     }
 
     // MARK: - Interactive States
 
     var hoverBackground: Color {
-        colorScheme == .dark ? Color(hex: "2d2e30") : Color(hex: "f0f0f2")
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04)
     }
 
     var selectedBackground: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.2) : Color(hex: "00976d").opacity(0.12)
+        colorScheme == .dark ? accent.opacity(0.20) : accent.opacity(0.12)
     }
 
-    // MARK: - Message Bubble Colors
+    // MARK: - Message Bubble Colors (Liquid Glass)
 
     var userBubble: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.15) : Color(hex: "00976d").opacity(0.08)
+        colorScheme == .dark ? accent.opacity(0.20) : accent.opacity(0.12)
     }
 
     var userBubbleBorder: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.3) : Color(hex: "00976d").opacity(0.2)
+        colorScheme == .dark ? accent.opacity(0.35) : accent.opacity(0.25)
     }
 
     var assistantBubble: Color {
-        colorScheme == .dark ? Color(hex: "232426") : Color(hex: "ffffff")
+        colorScheme == .dark ? Color(hex: "2c2c2e") : Color(hex: "ffffff")
     }
 
     var systemBubble: Color {
-        colorScheme == .dark ? Color(hex: "2d2e30") : Color(hex: "f0f0f2")
+        colorScheme == .dark ? Color(hex: "3a3a3c") : Color(hex: "f2f2f7")
     }
 
     // MARK: - Input Field Colors
 
     var inputBackground: Color {
-        colorScheme == .dark ? Color(hex: "252628") : Color(hex: "ffffff")
+        colorScheme == .dark ? Color(hex: "1c1c1e") : Color(hex: "ffffff")
     }
 
     var inputBorder: Color {
-        colorScheme == .dark ? Color(hex: "3a3b3d") : Color(hex: "d1d1d6")
+        colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.12)
     }
 
     var inputFocusBorder: Color {
         accent
     }
 
-    // MARK: - Sidebar Colors
+    // MARK: - Sidebar Colors (Translucent)
 
     var sidebarBackground: Color {
-        colorScheme == .dark ? Color(hex: "1c1d1f") : Color(hex: "f5f5f7")
+        colorScheme == .dark ? Color(hex: "1c1c1e").opacity(0.85) : Color(hex: "f5f5f7").opacity(0.90)
     }
 
     var sidebarItemHover: Color {
-        colorScheme == .dark ? Color(hex: "2a2b2d") : Color(hex: "e8e8ea")
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05)
     }
 
     var sidebarItemSelected: Color {
-        colorScheme == .dark ? Color(hex: "00976d").opacity(0.2) : Color(hex: "00976d").opacity(0.12)
+        colorScheme == .dark ? accent.opacity(0.22) : accent.opacity(0.14)
     }
 
     // MARK: - Code Block Colors
 
     var codeBlockBackground: Color {
-        colorScheme == .dark ? Color(hex: "1a1b1d") : Color(hex: "f5f5f7")
+        colorScheme == .dark ? Color(hex: "1c1c1e") : Color(hex: "f5f5f7")
     }
 
     var codeBlockHeaderBackground: Color {
-        colorScheme == .dark ? Color(hex: "2d2e30").opacity(0.5) : Color(hex: "eaeaec")
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04)
     }
 
     // MARK: - Skeleton/Loading Colors
 
     var skeletonBase: Color {
-        colorScheme == .dark ? Color(hex: "2d2e30") : Color(hex: "e5e5e7")
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
     }
 
     var skeletonHighlight: Color {
-        colorScheme == .dark ? Color(hex: "3a3b3d") : Color(hex: "f5f5f7")
+        colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.03)
     }
 
-    // MARK: - Shadow Colors
+    // MARK: - Shadow Colors (Subtle for Tahoe)
 
     var shadowLight: Color {
-        colorScheme == .dark ? Color.black.opacity(0.2) : Color.black.opacity(0.05)
+        colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.04)
     }
 
     var shadowMedium: Color {
-        colorScheme == .dark ? Color.black.opacity(0.3) : Color.black.opacity(0.1)
+        colorScheme == .dark ? Color.black.opacity(0.40) : Color.black.opacity(0.08)
     }
 
     var shadowStrong: Color {
-        colorScheme == .dark ? Color.black.opacity(0.4) : Color.black.opacity(0.15)
+        colorScheme == .dark ? Color.black.opacity(0.50) : Color.black.opacity(0.12)
     }
 
     // MARK: - Divider Colors
 
     var divider: Color {
-        colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08)
+        colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
     }
 
-    // MARK: - Gradients
+    // MARK: - Gradients (Subtle for Tahoe)
 
     var surfaceGradient: LinearGradient {
         colorScheme == .dark
-        ? LinearGradient(colors: [Color(hex: "1e1f21"), Color(hex: "1a1b1d")], startPoint: .top, endPoint: .bottom)
-        : LinearGradient(colors: [Color(hex: "ffffff"), Color(hex: "fafafa")], startPoint: .top, endPoint: .bottom)
+        ? LinearGradient(colors: [Color(hex: "1c1c1e"), Color(hex: "161617")], startPoint: .top, endPoint: .bottom)
+        : LinearGradient(colors: [Color(hex: "ffffff"), Color(hex: "f5f5f7")], startPoint: .top, endPoint: .bottom)
     }
 
     var cardGradient: LinearGradient {
         colorScheme == .dark
-        ? LinearGradient(colors: [Color(hex: "282a2c"), Color(hex: "232426")], startPoint: .top, endPoint: .bottom)
-        : LinearGradient(colors: [Color(hex: "ffffff"), Color(hex: "f8f8fa")], startPoint: .top, endPoint: .bottom)
+        ? LinearGradient(colors: [Color(hex: "2c2c2e"), Color(hex: "28282a")], startPoint: .top, endPoint: .bottom)
+        : LinearGradient(colors: [Color(hex: "ffffff"), Color(hex: "fafafa")], startPoint: .top, endPoint: .bottom)
+    }
+
+    // MARK: - Glass Effects (New for Tahoe)
+
+    var glassBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.05) : Color.white.opacity(0.70)
+    }
+
+    var glassBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.15) : Color.white.opacity(0.50)
     }
 }
 
@@ -923,3 +981,393 @@ extension View {
 }
 
 // Note: Color.init(hex:) extension is defined in VaizorApp.swift
+
+// MARK: - Shadow Elevation System
+
+/// Native macOS shadow elevation levels
+enum ShadowElevation {
+    case none
+    case subtle     // Buttons, small elements
+    case medium     // Cards, dropdowns
+    case high       // Floating panels, modals
+
+    /// Layered shadow configuration for native macOS feel
+    struct ShadowConfig {
+        let tightRadius: CGFloat
+        let tightY: CGFloat
+        let tightOpacity: Double
+        let diffuseRadius: CGFloat
+        let diffuseY: CGFloat
+        let diffuseOpacity: Double
+    }
+
+    func config(for colorScheme: ColorScheme) -> ShadowConfig {
+        let isDark = colorScheme == .dark
+        switch self {
+        case .none:
+            return ShadowConfig(tightRadius: 0, tightY: 0, tightOpacity: 0,
+                              diffuseRadius: 0, diffuseY: 0, diffuseOpacity: 0)
+        case .subtle:
+            return ShadowConfig(
+                tightRadius: isDark ? 1 : 2,
+                tightY: isDark ? 1 : 1,
+                tightOpacity: isDark ? 0.25 : 0.08,
+                diffuseRadius: isDark ? 3 : 4,
+                diffuseY: isDark ? 2 : 2,
+                diffuseOpacity: isDark ? 0.15 : 0.04
+            )
+        case .medium:
+            return ShadowConfig(
+                tightRadius: isDark ? 2 : 3,
+                tightY: isDark ? 1 : 2,
+                tightOpacity: isDark ? 0.30 : 0.10,
+                diffuseRadius: isDark ? 8 : 12,
+                diffuseY: isDark ? 4 : 6,
+                diffuseOpacity: isDark ? 0.20 : 0.06
+            )
+        case .high:
+            return ShadowConfig(
+                tightRadius: isDark ? 3 : 4,
+                tightY: isDark ? 2 : 3,
+                tightOpacity: isDark ? 0.35 : 0.12,
+                diffuseRadius: isDark ? 16 : 24,
+                diffuseY: isDark ? 8 : 12,
+                diffuseOpacity: isDark ? 0.25 : 0.10
+            )
+        }
+    }
+}
+
+/// View modifier for native layered shadows
+struct NativeShadowModifier: ViewModifier {
+    let elevation: ShadowElevation
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let config = elevation.config(for: colorScheme)
+        content
+            // Tight shadow (close to element)
+            .shadow(
+                color: Color.black.opacity(config.tightOpacity),
+                radius: config.tightRadius,
+                x: 0,
+                y: config.tightY
+            )
+            // Diffuse shadow (ambient)
+            .shadow(
+                color: Color.black.opacity(config.diffuseOpacity),
+                radius: config.diffuseRadius,
+                x: 0,
+                y: config.diffuseY
+            )
+    }
+}
+
+extension View {
+    /// Apply native macOS layered shadow
+    func nativeShadow(elevation: ShadowElevation) -> some View {
+        modifier(NativeShadowModifier(elevation: elevation))
+    }
+}
+
+// MARK: - Native Panel Modifier
+
+/// Panel styles following macOS material guidelines
+struct NativePanelModifier: ViewModifier {
+    enum PanelStyle {
+        case floating   // .regularMaterial, high shadow (popovers, modals)
+        case dropdown   // .thinMaterial, medium shadow (menus, dropdowns)
+        case sidebar    // .thinMaterial, no shadow (sidebars)
+        case toolbar    // .ultraThinMaterial, no shadow (toolbars)
+        case card       // Solid surface, subtle shadow (cards)
+    }
+
+    let style: PanelStyle
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    func body(content: Content) -> some View {
+        switch style {
+        case .floating:
+            content
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 0.5)
+                )
+                .nativeShadow(elevation: .high)
+
+        case .dropdown:
+            content
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 0.5)
+                )
+                .nativeShadow(elevation: .medium)
+
+        case .sidebar:
+            content
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+        case .toolbar:
+            content
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+        case .card:
+            content
+                .background(colors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(colors.border, lineWidth: 1)
+                )
+                .nativeShadow(elevation: .subtle)
+        }
+    }
+}
+
+extension View {
+    /// Apply native macOS panel styling
+    func nativePanel(_ style: NativePanelModifier.PanelStyle, cornerRadius: CGFloat = VaizorSpacing.radiusLg) -> some View {
+        modifier(NativePanelModifier(style: style, cornerRadius: cornerRadius))
+    }
+}
+
+// MARK: - Native Focus Ring Modifier
+
+/// Focus ring following macOS accessibility guidelines
+struct NativeFocusRingModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let isCircular: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, isCircular: Bool = false) {
+        self.isFocused = isFocused
+        self.cornerRadius = cornerRadius
+        self.isCircular = isCircular
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(focusOverlay)
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            if isCircular {
+                Circle()
+                    .stroke(colors.accent, lineWidth: 2)
+                    .padding(-4) // Offset outward from element
+                    .shadow(color: colors.accent.opacity(0.4), radius: 4, x: 0, y: 0)
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
+                    .stroke(colors.accent, lineWidth: 2)
+                    .padding(-4)
+                    .shadow(color: colors.accent.opacity(0.4), radius: 4, x: 0, y: 0)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Apply native macOS focus ring
+    func nativeFocusRing(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd) -> some View {
+        modifier(NativeFocusRingModifier(isFocused: isFocused, cornerRadius: cornerRadius))
+    }
+
+    /// Apply circular focus ring (for icon buttons)
+    func nativeCircularFocusRing(isFocused: Bool) -> some View {
+        modifier(NativeFocusRingModifier(isFocused: isFocused, isCircular: true))
+    }
+}
+
+// MARK: - Native Hover Modifier
+
+/// Hover state modifier following macOS interaction patterns
+struct NativeHoverModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let includeScale: Bool
+    let isCircular: Bool
+
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(cornerRadius: CGFloat = VaizorSpacing.radiusSm, includeScale: Bool = false, isCircular: Bool = false) {
+        self.cornerRadius = cornerRadius
+        self.includeScale = includeScale
+        self.isCircular = isCircular
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background(backgroundShape)
+            .scaleEffect(scaleAmount)
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+
+    @ViewBuilder
+    private var backgroundShape: some View {
+        if isCircular {
+            Circle()
+                .fill(isHovered ? colors.hoverBackground : Color.clear)
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(isHovered ? colors.hoverBackground : Color.clear)
+        }
+    }
+
+    private var scaleAmount: CGFloat {
+        guard includeScale, !reduceMotion else { return 1.0 }
+        return isHovered ? 1.02 : 1.0
+    }
+}
+
+extension View {
+    /// Apply native hover background effect
+    func nativeHover(cornerRadius: CGFloat = VaizorSpacing.radiusSm, includeScale: Bool = false) -> some View {
+        modifier(NativeHoverModifier(cornerRadius: cornerRadius, includeScale: includeScale))
+    }
+
+    /// Apply circular hover effect (for icons)
+    func nativeCircularHover(includeScale: Bool = false) -> some View {
+        modifier(NativeHoverModifier(cornerRadius: 0, includeScale: includeScale, isCircular: true))
+    }
+}
+
+// MARK: - Native Input Field Modifier
+
+/// Input field styling following macOS text field guidelines
+struct NativeInputFieldModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let hasError: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    init(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, hasError: Bool = false) {
+        self.isFocused = isFocused
+        self.cornerRadius = cornerRadius
+        self.hasError = hasError
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(VaizorSpacing.sm)
+            .background(colors.inputBackground)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(borderOverlay)
+            .shadow(
+                color: focusShadowColor,
+                radius: isFocused ? 4 : 0,
+                x: 0,
+                y: 0
+            )
+            .animation(.easeInOut(duration: 0.15), value: isFocused)
+    }
+
+    @ViewBuilder
+    private var borderOverlay: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .stroke(borderColor, lineWidth: isFocused || hasError ? 2 : 1)
+    }
+
+    private var borderColor: Color {
+        if hasError {
+            return colors.error
+        }
+        if isFocused {
+            return colors.accent
+        }
+        return colors.inputBorder
+    }
+
+    private var focusShadowColor: Color {
+        if hasError {
+            return colors.error.opacity(0.25)
+        }
+        if isFocused {
+            return colors.accent.opacity(0.25)
+        }
+        return .clear
+    }
+}
+
+extension View {
+    /// Apply native macOS input field styling
+    func nativeInputField(isFocused: Bool, cornerRadius: CGFloat = VaizorSpacing.radiusMd, hasError: Bool = false) -> some View {
+        modifier(NativeInputFieldModifier(isFocused: isFocused, cornerRadius: cornerRadius, hasError: hasError))
+    }
+}
+
+// MARK: - Native List Row Modifier
+
+/// List row styling for native selection/hover states
+struct NativeListRowModifier: ViewModifier {
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, VaizorSpacing.sm)
+            .padding(.vertical, VaizorSpacing.xs)
+            .background(backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isHovered)
+            .animation(reduceMotion ? .none : .easeInOut(duration: 0.15), value: isSelected)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return colors.selectedBackground
+        }
+        if isHovered {
+            return colors.hoverBackground
+        }
+        return .clear
+    }
+}
+
+extension View {
+    /// Apply native list row styling
+    func nativeListRow(isSelected: Bool = false, cornerRadius: CGFloat = VaizorSpacing.radiusSm) -> some View {
+        modifier(NativeListRowModifier(isSelected: isSelected, cornerRadius: cornerRadius))
+    }
+}

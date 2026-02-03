@@ -212,6 +212,11 @@ struct ChatView: View {
             onRegenerate: message.role == .assistant ? { regenerateResponse(for: message) } : nil,
             onRegenerateDifferent: message.role == .assistant ? { regenerateWithDifferentModel(for: message) } : nil,
             onScrollToTop: message.role == .assistant ? { scrollToMessage(message) } : nil,
+            onRetryToolCall: { id, name, input in
+                Task {
+                    await viewModel.retryToolCall(toolCallId: id, toolName: name, inputJson: input)
+                }
+            },
             animationIndex: animationIndex,
             shouldAnimateAppear: animationIndex < 10 // Only animate first 10 messages
         )
@@ -228,15 +233,27 @@ struct ChatView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                if viewModel.currentStreamingText.isEmpty {
-                    ThinkingIndicator(status: viewModel.thinkingStatus)
+                // Active tool calls during streaming
+                if !viewModel.activeToolCalls.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(viewModel.activeToolCalls) { toolCall in
+                            CollapsibleToolCallView(toolCall: toolCall)
+                        }
+                    }
+                    .padding(.leading, 46) // Align with message content (avatar width + spacing)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if viewModel.currentStreamingText.isEmpty && viewModel.activeToolCalls.isEmpty {
+                    ThinkingIndicator(status: viewModel.thinkingStatus, provider: container.currentProvider)
                         .id("thinking")
-                } else {
-                    StreamingMessageView(text: viewModel.currentStreamingText)
+                } else if !viewModel.currentStreamingText.isEmpty {
+                    StreamingMessageView(text: viewModel.currentStreamingText, provider: container.currentProvider)
                         .id("streaming")
                 }
             }
             .animation(.easeInOut(duration: 0.3), value: viewModel.contextWasEnhanced)
+            .animation(.easeInOut(duration: 0.2), value: viewModel.activeToolCalls.count)
         }
     }
 
@@ -305,6 +322,7 @@ struct ChatView: View {
                 .font(VaizorTypography.body)
                 .foregroundStyle(colors.textPrimary)
                 .lineLimit(1...6)
+                .submitLabel(.send)
                 .disabled(viewModel.isStreaming)
                 .focused($isInputFocused)
                 .padding(.leading, VaizorSpacing.md)
@@ -343,22 +361,29 @@ struct ChatView: View {
                         checkForMentionTrigger(in: newValue)
                     }
                 }
+                .onSubmit {
+                    // .onSubmit fires on Return key - use as primary submission handler
+                    // Note: For Shift+Enter to insert newlines, we handle it separately
+                    if !viewModel.isStreaming && (!messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !droppedFiles.isEmpty) {
+                        // Check if mention suggestions are shown - if so, select instead of send
+                        if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                            selectMention(at: selectedMentionIndex)
+                        } else {
+                            Task { await sendMessage() }
+                        }
+                    }
+                }
                 .onKeyPress(.return, phases: .down) { press in
-                    // Shift+Enter: insert newline
+                    // Shift+Enter: insert newline (keep for explicit newline insertion)
                     if press.modifiers.contains(.shift) {
                         messageText += "\n"
                         return .handled
                     }
-                    // Plain Enter: send message (unless mention suggestions are shown)
-                    if showMentionSuggestions && !mentionSuggestions.isEmpty {
-                        selectMention(at: selectedMentionIndex)
-                        return .handled
-                    }
-                    Task { await sendMessage() }
-                    return .handled
+                    // Let .onSubmit handle plain Enter - return .ignored so system can process
+                    return .ignored
                 }
 
-            // Send button integrated into the capsule with gradient
+            // Send button integrated into the capsule - solid color per native macOS
             Button {
                 if viewModel.isStreaming {
                     viewModel.stopStreaming()
@@ -366,63 +391,54 @@ struct ChatView: View {
                     Task { await sendMessage() }
                 }
             } label: {
-                ZStack {
-                    Circle()
-                        .fill(sendButtonGradient)
-                        .frame(width: VaizorSpacing.xl, height: VaizorSpacing.xl)
-                        .shadow(color: sendButtonShadow, radius: 4, y: 2)
-
-                    Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
-                        .font(VaizorTypography.body)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
-                        .contentTransition(.symbolEffect(.replace))
-                }
+                Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
+                    .font(VaizorTypography.body)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+                    .contentTransition(.symbolEffect(.replace))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(VaizorSendButtonStyle(
+                isStreaming: viewModel.isStreaming,
+                isEmpty: messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ))
             .disabled(!viewModel.isStreaming && messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .padding(.trailing, VaizorSpacing.xxs + 2)
             .padding(.vertical, VaizorSpacing.xxs + 2)
         }
         .background(
+            // Tahoe-style: Clean, pill-shaped input with subtle material feel
             Capsule()
                 .fill(colors.inputBackground)
         )
-        // Inner shadow for recessed effect (subtle in light mode)
-        .overlay(
-            colorScheme == .dark ?
-            Capsule()
-                .stroke(ThemeColors.innerShadow, lineWidth: 1)
-                .blur(radius: 1)
-                .mask(Capsule())
-            : nil
-        )
-        // Focus glow ring
+        // Clean border - Tahoe style
         .overlay(
             Capsule()
-                .stroke(isInputFocused ? colors.accent : colors.borderSubtle, lineWidth: isInputFocused ? 1.5 : 0.5)
+                .stroke(isInputFocused ? colors.accent : colors.border, lineWidth: isInputFocused ? 1.5 : 1)
         )
-        .shadow(color: isInputFocused ? (colorScheme == .light ? colors.accent.opacity(0.25) : ThemeColors.focusGlow) : .clear, radius: colorScheme == .light ? 6 : 8, y: 0)
-        .animation(.easeInOut(duration: 0.15), value: isInputFocused)
+        // Subtle focus glow
+        .shadow(color: isInputFocused ? colors.accent.opacity(0.20) : .clear, radius: 8, y: 0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isInputFocused)
     }
 
-    private var sendButtonGradient: LinearGradient {
+    // Send button color - solid colors per native macOS guidelines (no gradients)
+    private var sendButtonColor: Color {
         if viewModel.isStreaming {
-            return LinearGradient(colors: [Color(hex: "e53935"), Color(hex: "c62828")], startPoint: .top, endPoint: .bottom)
+            return colors.error
         } else if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return LinearGradient(colors: [ThemeColors.disabledText], startPoint: .top, endPoint: .bottom)
+            return colors.textMuted
         } else {
-            return ThemeColors.accentGradient
+            return colors.accent
         }
     }
 
     private var sendButtonShadow: Color {
+        // Native macOS: Subtle shadows only on interactive state
         if viewModel.isStreaming {
-            return Color(hex: "e53935").opacity(0.3)
+            return colors.error.opacity(0.25)
         } else if messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .clear
         } else {
-            return ThemeColors.accentGlow
+            return colors.accent.opacity(0.30)
         }
     }
 
@@ -615,16 +631,15 @@ struct ChatView: View {
     @ViewBuilder
     private var topInputRow: some View {
         HStack(spacing: 8) {
-            // Left icons
+            // Left icons - using VaizorIconButtonStyle for consistency
             HStack(spacing: 6) {
                 Button {
                     selectFiles()
                 } label: {
                     Image(systemName: "plus.circle")
                         .font(.system(size: 18))
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .vaizorIconButtonStyle(size: .small)
                 .help("Attach Files")
                 .accessibilityLabel("Attach files")
 
@@ -636,9 +651,8 @@ struct ChatView: View {
                 } label: {
                     Image(systemName: "photo")
                         .font(.system(size: 18))
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .vaizorIconButtonStyle(size: .small)
                 .help("Add image")
                 .accessibilityLabel("Add image")
 
@@ -647,9 +661,8 @@ struct ChatView: View {
                 } label: {
                     Image(systemName: "rectangle.on.rectangle.angled")
                         .font(.system(size: 18))
-                        .foregroundStyle(showWhiteboard ? .blue : .secondary)
                 }
-                .buttonStyle(.plain)
+                .vaizorIconButtonStyle(size: .small, isActive: showWhiteboard, activeColor: .blue)
                 .help("Open whiteboard")
                 .accessibilityLabel(showWhiteboard ? "Close whiteboard" : "Open whiteboard")
 
@@ -662,7 +675,6 @@ struct ChatView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "globe")
                             .font(.system(size: 18))
-                            .foregroundStyle(showBrowserPanel ? ThemeColors.accent : .secondary)
 
                         if browserService.isLoading {
                             ProgressView()
@@ -671,7 +683,7 @@ struct ChatView: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                .vaizorIconButtonStyle(size: .small, isActive: showBrowserPanel, activeColor: colors.accent)
                 .help("AI Browser")
                 .accessibilityLabel(showBrowserPanel ? "Close browser" : "Open AI browser")
 
@@ -836,7 +848,7 @@ struct ChatView: View {
                     Button {
                         Task { @MainActor in
                             if isEnabled {
-                                container.mcpManager.stopServer(server)
+                                await container.mcpManager.stopServer(server)
                             } else {
                                 do {
                                     try await container.mcpManager.startServer(server)
@@ -904,6 +916,7 @@ struct ChatView: View {
         .onAppear {
             AppLogger.shared.log("ChatView appeared for conversation \(conversationId)", level: .info)
             viewModel.setContainer(container)
+            viewModel.setMCPManager(container.mcpManager)
 
             // Load conversation-specific model settings if available
             if let conversation = conversationManager.conversations.first(where: { $0.id == conversationId }) {
@@ -928,6 +941,9 @@ struct ChatView: View {
                 if selectedModel.isEmpty {
                     selectedModel = container.availableModels.first ?? container.currentProvider.defaultModels.first ?? ""
                 }
+
+                // Check if agent should greet the user
+                await viewModel.checkAndSendAgentGreeting()
             }
             // Auto-focus the text field
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -1107,6 +1123,12 @@ struct ChatView: View {
         }
         .onChange(of: container.apiKeys) { _, _ in
             viewModel.updateProvider(container.createLLMProvider())
+        }
+        .onChange(of: viewModel.isStreaming) { _, isStreaming in
+            // Restore focus to chat input when streaming completes
+            if !isStreaming {
+                isInputFocused = true
+            }
         }
         .sheet(isPresented: $showWhiteboard) {
             WhiteboardView(isPresented: $showWhiteboard)
@@ -2143,6 +2165,12 @@ struct EditableMessageView: View {
 
 struct StreamingMessageView: View {
     let text: String
+    let provider: LLMProvider?
+
+    init(text: String, provider: LLMProvider? = nil) {
+        self.text = text
+        self.provider = provider
+    }
 
     // Break out the heavy MarkdownUI pipeline to help the type-checker
     private var configuredMarkdown: some View {
@@ -2173,15 +2201,23 @@ struct StreamingMessageView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // Avatar
+            // Avatar - use provider icon if available
             ZStack {
                 Circle()
                     .fill(ThemeColors.accent.opacity(0.2))
                     .frame(width: 32, height: 32)
 
-                Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(ThemeColors.accent)
+                if let provider = provider {
+                    ProviderIconManager.icon(for: provider)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 20, height: 20)
+                        .clipShape(Circle())
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(ThemeColors.accent)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -2444,8 +2480,4 @@ struct ErrorCard: View {
     }
 }
 
-// MARK: - Notification Extension for Settings
-
-extension Notification.Name {
-    static let openSettings = Notification.Name("openSettings")
-}
+// Note: openSettings notification is defined in VaizorApp.swift

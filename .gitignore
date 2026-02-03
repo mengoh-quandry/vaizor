@@ -37,3 +37,6 @@ build-config.sh
 
 # Notarization artifacts
 *-notarization.zip
+
+# Git Worktrees
+.worktrees/

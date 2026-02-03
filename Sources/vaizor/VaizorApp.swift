@@ -1,9 +1,12 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import KeychainAccess
 
 extension Notification.Name {
     static let toggleSettings = Notification.Name("toggleSettings")
+    static let openSettings = Notification.Name("openSettings")
+    static let ingestProject = Notification.Name("ingestProject")
     static let newChat = Notification.Name("newChat")
     static let sendInitialMessage = Notification.Name("sendInitialMessage")
     static let memoriesExtracted = Notification.Name("memoriesExtracted")
@@ -31,10 +34,90 @@ extension Notification.Name {
 @main
 struct VaizorApp: App {
     @StateObject private var container = DependencyContainer()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Initialize logging
         AppLogger.shared.log("Vaizor app starting", level: .info)
+
+        // Register for app termination to checkpoint database
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            DatabaseManager.shared.checkpoint()
+            AppLogger.shared.log("Database checkpointed on app termination", level: .info)
+        }
+
+        // Initialize all systems
+        Task {
+            await Self.initializePostgreSQL()
+            await Self.initializeAgentSystem()
+        }
+    }
+
+    private static func initializeAgentSystem() async {
+        do {
+            // Initialize the personal file (agent identity)
+            try await PersonalFileManager.shared.initialize()
+            AppLogger.shared.log("Agent PersonalFile initialized", level: .info)
+
+            // Load installed skills
+            let skillLoader = SkillLoader()
+            try await skillLoader.loadAllSkills()
+            AppLogger.shared.log("Loaded \(skillLoader.skillCount) skills", level: .info)
+
+            // Initialize skill package manager
+            let skillManager = SkillPackageManager()
+            try await skillManager.loadAllSkills()
+            AppLogger.shared.log("SkillPackageManager ready", level: .info)
+
+        } catch {
+            AppLogger.shared.log("Agent system initialization failed: \(error.localizedDescription)", level: .warning)
+        }
+    }
+
+    private static func initializePostgreSQL() async {
+        let defaults = UserDefaults.standard
+        guard let host = defaults.string(forKey: "postgres.host"),
+              let portString = defaults.string(forKey: "postgres.port"),
+              let port = Int(portString),
+              let database = defaults.string(forKey: "postgres.database"),
+              let username = defaults.string(forKey: "postgres.username") else {
+            AppLogger.shared.log("PostgreSQL settings not configured - using defaults", level: .info)
+            // Try default local configuration
+            do {
+                try await PostgresManager.shared.configure(with: .local)
+                try await PostgresManager.shared.runMigrations()
+                AppLogger.shared.log("PostgreSQL connected with local defaults", level: .info)
+            } catch {
+                AppLogger.shared.log("PostgreSQL auto-connect failed: \(error.localizedDescription)", level: .warning)
+            }
+            return
+        }
+
+        // Load password from Keychain
+        let keychain = Keychain(service: "com.quandrylabs.vaizor")
+        let password = try? keychain.get("postgres.password") ?? ""
+        let useTLS = defaults.bool(forKey: "postgres.tls")
+
+        let config = PostgresManager.PostgresConfig(
+            host: host,
+            port: port,
+            username: username,
+            password: password ?? "",
+            database: database,
+            tls: useTLS
+        )
+
+        do {
+            try await PostgresManager.shared.configure(with: config)
+            try await PostgresManager.shared.runMigrations()
+            AppLogger.shared.log("PostgreSQL connected to \(host):\(port)/\(database)", level: .info)
+        } catch {
+            AppLogger.shared.log("PostgreSQL auto-connect failed: \(error.localizedDescription)", level: .warning)
+        }
     }
 
     var body: some Scene {
@@ -44,6 +127,13 @@ struct VaizorApp: App {
                 .withAdaptiveColors()
                 .onAppear {
                     AppLogger.shared.log("ContentView appeared", level: .info)
+                }
+                .onChange(of: scenePhase) { oldPhase, newPhase in
+                    if newPhase == .background || newPhase == .inactive {
+                        // Checkpoint database when app goes to background
+                        DatabaseManager.shared.checkpoint()
+                        AppLogger.shared.log("Database checkpointed on scene phase: \(newPhase)", level: .info)
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -57,6 +147,11 @@ struct VaizorApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
+                Button("Ingest Project...") {
+                    NotificationCenter.default.post(name: .ingestProject, object: nil)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
                 Divider()
 
                 Button("Export Conversation...") {
@@ -68,9 +163,9 @@ struct VaizorApp: App {
                     NotificationCenter.default.post(name: .importConversation, object: nil)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
-                
+
                 Divider()
-                
+
                 Button("Close Window") {
                     NSApplication.shared.keyWindow?.close()
                 }
@@ -209,6 +304,7 @@ struct ContentView: View {
     // Onboarding state
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
+    @State private var showProjectIngestion = false
 
     // Adaptive colors for light/dark mode
     private var colors: AdaptiveColors {
@@ -226,16 +322,17 @@ struct ContentView: View {
                 if sidebarPosition == .left && showSidebar {
                     sidebarWithTrafficLights
                         .frame(width: sidebarWidth(for: geometry.size.width))
+
+                    // Tahoe-style: Subtle separator between sidebar and content
+                    Rectangle()
+                        .fill(colors.border)
+                        .frame(width: 1)
                 }
 
                 // Main content area with header
                 VStack(spacing: 0) {
                     // Main content header with drag area
                     mainContentHeader
-                        .frame(height: 52)
-
-                    Divider()
-                        .opacity(0.5)
 
                     // Content area (flexible, takes remaining space)
                     if splitConversation != nil {
@@ -255,6 +352,11 @@ struct ContentView: View {
 
                 // Right sidebar
                 if sidebarPosition == .right && showSidebar {
+                    // Tahoe-style: Subtle separator
+                    Rectangle()
+                        .fill(colors.border)
+                        .frame(width: 1)
+
                     sidebarWithTrafficLights
                         .frame(width: sidebarWidth(for: geometry.size.width))
                 }
@@ -394,8 +496,16 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(isPresented: $showOnboarding)
-                .frame(minWidth: 800, minHeight: 600)
+                .frame(width: 900, height: 750)
                 .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: $showProjectIngestion) {
+            ProjectIngestionView(isPresented: $showProjectIngestion)
+                .environmentObject(container)
+                .frame(minWidth: 700, minHeight: 550)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ingestProject)) { _ in
+            showProjectIngestion = true
         }
         .onChange(of: showOnboarding) { oldValue, newValue in
             // When onboarding is dismissed (showOnboarding becomes false),
@@ -463,18 +573,19 @@ struct ContentView: View {
                 window.titleVisibility = .hidden
                 window.styleMask.insert(.fullSizeContentView)
 
-                // Set background color
-                window.backgroundColor = NSColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1.0)
+                // Tahoe-style: Allow vibrancy/transparency to show through
+                window.isOpaque = false
+                window.backgroundColor = .clear
 
                 // Configure traffic lights position
                 if let closeButton = window.standardWindowButton(.closeButton) {
-                    closeButton.superview?.frame.origin.y = 8
+                    closeButton.superview?.frame.origin.y = 12
                 }
             }
         }
     }
 
-    // Sidebar with traffic lights space at top
+    // Sidebar with traffic lights space at top - Tahoe liquid glass style
     private var sidebarWithTrafficLights: some View {
         VStack(spacing: 0) {
             // Traffic lights area (macOS window controls)
@@ -489,34 +600,41 @@ struct ContentView: View {
             // Actual sidebar content
             tabbedSidebar
         }
-        .background(sidebarDarkBase)
     }
 
-    // Main content header with conversation title and controls
+    // Main content header with conversation title and controls - balanced Tahoe style
     private var mainContentHeader: some View {
-        HStack(spacing: 12) {
-            // Toggle sidebar button
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showSidebar.toggle()
+        HStack(spacing: 0) {
+            // Left side: Toggle sidebar button (balanced with right side)
+            HStack(spacing: 12) {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 15, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(colors.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
-            } label: {
-                Image(systemName: showSidebar ? "sidebar.left" : "sidebar.left")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(sidebarTextSecondary)
+                .buttonStyle(.plain)
+                .help("Toggle sidebar (⌘⇧S)")
             }
-            .buttonStyle(.plain)
-            .help("Toggle sidebar")
+            .frame(width: 80, alignment: .leading)
 
-            // Conversation title or "New Chat"
+            Spacer()
+
+            // Center: Conversation title
             Text(selectedConversation?.title ?? "New Chat")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(sidebarTextPrimary)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(colors.textPrimary)
                 .lineLimit(1)
 
             Spacer()
 
-            // Right side controls
+            // Right side controls (balanced width with left side)
             HStack(spacing: 12) {
                 // Share button
                 Button {
@@ -524,48 +642,54 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(sidebarTextSecondary)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(colors.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Share conversation")
 
                 // Artifact panel toggle
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         showArtifactPanel.toggle()
                     }
-                    // Post notification to toggle artifact panel in ChatView
                     NotificationCenter.default.post(
                         name: .toggleArtifactPanel,
                         object: showArtifactPanel
                     )
                 } label: {
-                    Image(systemName: showArtifactPanel ? "sidebar.right" : "sidebar.right")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(showArtifactPanel ? sidebarAccent : sidebarTextSecondary)
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 15, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(showArtifactPanel ? colors.accent : colors.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Toggle artifact panel")
+                .help("Toggle artifact panel (⌘⇧A)")
             }
-            .padding(.trailing, 8)
+            .frame(width: 80, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
+        .frame(height: 52)
         .background(
             ZStack {
-                Color(hex: "1c1d1f")
+                // Tahoe-style: Subtle material background
+                colors.background
                 WindowDragArea()
             }
         )
     }
 
-    // Dark theme colors for sidebar
-    private let sidebarDarkBase = Color(hex: "1c1d1f")
-    private let sidebarDarkSurface = Color(hex: "232426")
-    private let sidebarDarkBorder = Color(hex: "2d2e30")
-    private let sidebarTextPrimary = Color.white
-    private let sidebarTextSecondary = Color(hex: "808080")
-    private let sidebarAccent = Color(hex: "00976d")
+    // Tahoe-style sidebar colors using adaptive theme
+    private var sidebarDarkBase: Color { colors.background }
+    private var sidebarDarkSurface: Color { colors.surface }
+    private var sidebarDarkBorder: Color { colors.border }
+    private var sidebarTextPrimary: Color { colors.textPrimary }
+    private var sidebarTextSecondary: Color { colors.textSecondary }
+    private var sidebarAccent: Color { colors.accent }
 
     private var tabbedSidebar: some View {
         VStack(spacing: 0) {
@@ -581,16 +705,20 @@ struct ContentView: View {
                 sidebarNavigation
                     .padding(.horizontal, 8)
 
+                // Translucent divider that works with material
                 Rectangle()
-                    .fill(sidebarDarkBorder)
+                    .fill(colors.divider)
                     .frame(height: 1)
                     .padding(.vertical, 8)
 
                 // Recents section
                 sidebarRecents
-            } else {
+            } else if selectedTab == .code {
                 // Code tab content
                 sidebarCodeContent
+            } else if selectedTab == .agent {
+                // Agent tab content
+                sidebarAgentContent
             }
 
             Spacer()
@@ -598,7 +726,18 @@ struct ContentView: View {
             // User profile at bottom
             sidebarUserProfile
         }
-        .background(sidebarDarkBase)
+        .background(
+            // More opaque material for better readability
+            Group {
+                if #available(macOS 26.0, *) {
+                    Color.clear
+                        .background(.regularMaterial)
+                } else {
+                    Color.clear
+                        .background(.regularMaterial)
+                }
+            }
+        )
         .sheet(isPresented: $showHelpSheet) {
             HelpSheetView()
         }
@@ -618,7 +757,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
 
             Rectangle()
-                .fill(sidebarDarkBorder)
+                .fill(colors.divider)
                 .frame(height: 1)
 
             // Quick actions
@@ -630,7 +769,7 @@ struct ContentView: View {
             .padding(.horizontal, 8)
 
             Rectangle()
-                .fill(sidebarDarkBorder)
+                .fill(colors.divider)
                 .frame(height: 1)
 
             // Recent executions
@@ -657,6 +796,20 @@ struct ContentView: View {
         .padding(.top, 8)
     }
 
+    private var sidebarAgentContent: some View {
+        ScrollView {
+            VStack(spacing: VaizorSpacing.md) {
+                AgentStatusView(agentService: container.agentService)
+                SystemContextView(agentService: container.agentService)
+                RecentEventsView(agentService: container.agentService)
+                PendingProposalsView(agentService: container.agentService)
+                AgentNotificationsPanel(agentService: container.agentService)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
+    }
+
     private func codeActionButton(icon: String, title: String, subtitle: String) -> some View {
         Button {
             // Action handler
@@ -679,8 +832,8 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(sidebarDarkSurface)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(colors.hoverBackground)
             )
         }
         .buttonStyle(.plain)
@@ -899,38 +1052,40 @@ struct ContentView: View {
     // MARK: - New Claude-style Sidebar Components
 
     private var sidebarTabSwitcher: some View {
-        HStack(spacing: 0) {
+        // Tahoe-style glass segmented control
+        HStack(spacing: 2) {
             ForEach(SidebarTab.allCases, id: \.self) { tab in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                         selectedTab = tab
                     }
                 } label: {
                     Text(tab.rawValue)
-                        .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .regular))
-                        .foregroundStyle(selectedTab == tab ? sidebarTextPrimary : sidebarTextSecondary)
+                        .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .medium, design: .rounded))
+                        .foregroundStyle(selectedTab == tab ? colors.textPrimary : colors.textSecondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 7)
                         .background(
-                            selectedTab == tab ? sidebarDarkSurface : Color.clear
+                            selectedTab == tab
+                            ? RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(.regularMaterial)
+                                .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+                            : nil
                         )
-                        .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(3)
-        .background(sidebarDarkBase)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(sidebarDarkBorder, lineWidth: 1)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04))
         )
     }
 
     private var sidebarNavigation: some View {
-        VStack(spacing: 2) {
-            // New chat button (special styling)
+        VStack(spacing: 4) {
+            // New chat button (special styling) - Tahoe style
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     createNewChat()
@@ -938,10 +1093,11 @@ struct ContentView: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(sidebarAccent)
                     Text("New chat")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
                         .foregroundStyle(sidebarTextPrimary)
                     Spacer()
                 }
@@ -950,28 +1106,29 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
 
-            // Navigation items
+            // Navigation items - Tahoe style with hierarchical symbols
             ForEach([SidebarNavItem.chats, .projects, .artifacts]) { item in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                         selectedNavSection = item
                     }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: item.icon)
-                            .font(.system(size: 14))
+                            .font(.system(size: 14, weight: .medium))
+                            .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(selectedNavSection == item ? sidebarAccent : sidebarTextSecondary)
-                            .frame(width: 18)
+                            .frame(width: 20)
                         Text(item.rawValue)
-                            .font(.system(size: 13))
+                            .font(.system(size: 13, weight: selectedNavSection == item ? .medium : .regular))
                             .foregroundStyle(selectedNavSection == item ? sidebarTextPrimary : sidebarTextSecondary)
                         Spacer()
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 9)
                     .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedNavSection == item ? sidebarAccent.opacity(0.15) : Color.clear)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(selectedNavSection == item ? colors.selectedBackground : Color.clear)
                     )
                 }
                 .buttonStyle(.plain)
@@ -1056,7 +1213,7 @@ struct ContentView: View {
     private var sidebarUserProfile: some View {
         VStack(spacing: 0) {
             Rectangle()
-                .fill(sidebarDarkBorder)
+                .fill(colors.divider)
                 .frame(height: 1)
 
             Menu {
@@ -1400,6 +1557,7 @@ struct ContentView: View {
                 )
                 .id("main-\(conversation.id)")
                 .environmentObject(container)
+                .environmentObject(conversationManager)
             } else {
                 WelcomeView(
                     onNewChat: {
@@ -1459,6 +1617,7 @@ struct ContentView: View {
                 )
                 .id("split-\(conversation.id)")
                 .environmentObject(container)
+                .environmentObject(conversationManager)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1493,7 +1652,7 @@ struct ContentView: View {
 
         Task {
             do {
-                let exporter = ConversationExporter()
+                let exporter = DatabaseConversationExporter()
                 try await exporter.exportConversation(id: conversation.id, to: url)
             } catch {
                 AppLogger.shared.logError(error, context: "Failed to export conversation \(conversation.id)")
@@ -1533,6 +1692,7 @@ struct ContentView: View {
 enum SidebarTab: String, CaseIterable {
     case chat = "Chat"
     case code = "Code"
+    case agent = "Agent"
 }
 
 enum SidebarNavItem: String, CaseIterable, Identifiable {
@@ -1914,18 +2074,19 @@ struct SidebarConversationRow: View {
     let onSelect: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
 
-    private let darkSurface = Color(hex: "232426")
-    private let darkBorder = Color(hex: "2d2e30")
-    private let textPrimary = Color.white
-    private let textSecondary = Color(hex: "808080")
+    // Adaptive colors for Xcode-style translucent sidebar
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
 
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
                 Text(conversation.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? textPrimary : textSecondary)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .foregroundStyle(isSelected ? colors.textPrimary : colors.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
@@ -1934,26 +2095,26 @@ struct SidebarConversationRow: View {
                 if isHovered {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 12))
-                        .foregroundStyle(textSecondary)
+                        .foregroundStyle(colors.textMuted)
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? darkSurface : (isHovered ? darkBorder.opacity(0.5) : Color.clear))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? colors.sidebarItemSelected : (isHovered ? colors.sidebarItemHover : Color.clear))
             )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(.easeInOut(duration: 0.12)) {
                 isHovered = hovering
             }
         }
     }
 }
 
-// MARK: - Simplified Conversation Row (LibreChat style)
+// MARK: - Simplified Conversation Row (Xcode-style translucent sidebar)
 
 struct SimplifiedConversationRow: View {
     let conversation: Conversation
@@ -1966,35 +2127,41 @@ struct SimplifiedConversationRow: View {
 
     @State private var isHovered = false
     @State private var showRenameDialog = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            // Simple icon
+            // Simple icon - using hierarchical SF Symbol
             Image(systemName: "message")
                 .font(.system(size: 14))
-                .foregroundStyle(isSelected ? Color(hex: "00976d") : .secondary)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(isSelected ? colors.accent : colors.textSecondary)
                 .frame(width: 20)
 
             // Title and time
             VStack(alignment: .leading, spacing: 2) {
                 Text(conversation.title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(colors.textPrimary)
 
                 Text(formatConversationDate(conversation.lastUsedAt))
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(colors.textMuted)
             }
 
             Spacer()
 
-            // Favorite indicator
+            // Favorite indicator - Apple's system yellow
             if conversation.isFavorite {
                 Image(systemName: "star.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Color(hex: "ffd60a"))
             }
 
             // Delete button on hover
@@ -2004,20 +2171,20 @@ struct SimplifiedConversationRow: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(colors.textMuted)
                         .frame(width: 20, height: 20)
-                        .background(Color.primary.opacity(0.06))
-                        .cornerRadius(4)
+                        .background(colors.hoverBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color(hex: "00976d").opacity(0.12) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isSelected ? colors.sidebarItemSelected : (isHovered ? colors.sidebarItemHover : Color.clear))
         )
         .contentShape(Rectangle())
         .onTapGesture {
