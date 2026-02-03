@@ -436,7 +436,7 @@ struct BuiltInToolsButton: View {
     }
 
     var body: some View {
-        // Main button only - arc items rendered via overlay
+        // Main button with popover for arc tools
         Button {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                 isExpanded.toggle()
@@ -465,30 +465,56 @@ struct BuiltInToolsButton: View {
         }
         .buttonStyle(.plain)
         .help("Toggle tools")
-        .overlay(alignment: .center) {
-            // Arc items as overlay - doesn't affect layout
-            if isExpanded {
-                ZStack {
-                    ForEach(Array(tools.enumerated()), id: \.element.id) { index, tool in
-                        let angle = angleForIndex(index, total: tools.count)
-                        let offset = offsetForAngle(angle)
+        .popover(isPresented: $isExpanded, arrowEdge: .top) {
+            // Tools grid in popover
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Built-in Tools")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
 
-                        ArcToolItem(
-                            tool: tool,
-                            isExpanded: isExpanded,
-                            isHovered: hoveredTool == tool.id,
-                            offset: offset,
-                            delay: Double(index) * 0.04
-                        ) {
+                VStack(spacing: 4) {
+                    ForEach(tools) { tool in
+                        Button {
                             manager.toggleTool(tool.id)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: tool.icon)
+                                    .font(.system(size: 14))
+                                    .frame(width: 20)
+                                    .foregroundStyle(tool.isEnabled ? Color(hex: "00976d") : .secondary)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tool.displayName)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                    Text(tool.description)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: tool.isEnabled ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(tool.isEnabled ? Color(hex: "00976d") : .secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(tool.isEnabled ? Color(hex: "00976d").opacity(0.1) : Color.clear)
+                            )
                         }
-                        .onHover { hovering in
-                            hoveredTool = hovering ? tool.id : nil
-                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .allowsHitTesting(true)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
             }
+            .frame(width: 280)
         }
     }
 
