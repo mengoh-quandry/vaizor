@@ -322,6 +322,7 @@ struct ChatView: View {
                 .font(VaizorTypography.body)
                 .foregroundStyle(colors.textPrimary)
                 .lineLimit(1...6)
+                .submitLabel(.send)
                 .disabled(viewModel.isStreaming)
                 .focused($isInputFocused)
                 .padding(.leading, VaizorSpacing.md)
@@ -360,19 +361,26 @@ struct ChatView: View {
                         checkForMentionTrigger(in: newValue)
                     }
                 }
+                .onSubmit {
+                    // .onSubmit fires on Return key - use as primary submission handler
+                    // Note: For Shift+Enter to insert newlines, we handle it separately
+                    if !viewModel.isStreaming && (!messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !droppedFiles.isEmpty) {
+                        // Check if mention suggestions are shown - if so, select instead of send
+                        if showMentionSuggestions && !mentionSuggestions.isEmpty {
+                            selectMention(at: selectedMentionIndex)
+                        } else {
+                            Task { await sendMessage() }
+                        }
+                    }
+                }
                 .onKeyPress(.return, phases: .down) { press in
-                    // Shift+Enter: insert newline
+                    // Shift+Enter: insert newline (keep for explicit newline insertion)
                     if press.modifiers.contains(.shift) {
                         messageText += "\n"
                         return .handled
                     }
-                    // Plain Enter: send message (unless mention suggestions are shown)
-                    if showMentionSuggestions && !mentionSuggestions.isEmpty {
-                        selectMention(at: selectedMentionIndex)
-                        return .handled
-                    }
-                    Task { await sendMessage() }
-                    return .handled
+                    // Let .onSubmit handle plain Enter - return .ignored so system can process
+                    return .ignored
                 }
 
             // Send button integrated into the capsule - solid color per native macOS
