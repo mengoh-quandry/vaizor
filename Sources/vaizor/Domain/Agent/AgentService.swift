@@ -31,6 +31,7 @@ class AgentService: ObservableObject {
     private var appendageCoordinator: AppendageCoordinator?
     private var skillLoader: SkillLoader?
     private var guardrailsCoordinator: GuardrailsCoordinator?
+    private var skillGapDetector: SkillGapDetector?
 
     // MARK: - OS Integration Subsystems
     private let systemObserver = SystemObserver.shared
@@ -62,6 +63,9 @@ class AgentService: ObservableObject {
 
             // Initialize guardrails
             guardrailsCoordinator = GuardrailsCoordinator()
+
+            // Initialize skill gap detector
+            skillGapDetector = SkillGapDetector(personalFileManager: personalFileManager)
 
             // Set up observation bindings
             setupObservationBindings()
@@ -316,6 +320,121 @@ class AgentService: ObservableObject {
         }
 
         return await actionExecutor.execute(action)
+    }
+
+    // MARK: - Post-Conversation Updates
+
+    /// Process a completed conversation exchange to update agent memory and state
+    func processConversationExchange(
+        userMessage: String,
+        assistantResponse: String,
+        wasSuccessful: Bool,
+        topics: [String] = []
+    ) async {
+        // Update recent topics
+        var currentTopics = await personalFileManager.getPersonalFile().memory.recentTopics
+        for topic in topics where !currentTopics.contains(topic) {
+            currentTopics.insert(topic, at: 0)
+        }
+        await personalFileManager.updateRecentTopics(Array(currentTopics.prefix(10)))
+
+        // Record the interaction
+        let summary = "User: \(userMessage.prefix(100))... | Response: \(assistantResponse.prefix(100))..."
+        let outcome: EpisodeOutcome = wasSuccessful ? .successful : .challenging
+
+        await personalFileManager.recordEpisode(Episode(
+            summary: summary,
+            emotionalTone: currentMood,
+            outcome: outcome,
+            lessonsLearned: []
+        ))
+
+        // Update trust based on success
+        if wasSuccessful {
+            await personalFileManager.updateRelationshipTrust(delta: 0.01)
+            await personalFileManager.updateMood(adjustment: PersonalFileManager.EmotionalAdjustment(
+                valence: 0.05,
+                arousal: 0.0
+            ))
+        }
+
+        // Increment message count
+        await personalFileManager.incrementMessageCount()
+
+        // Analyze for skill gaps after processing the exchange
+        await analyzeForSkillGaps(
+            userMessage: userMessage,
+            assistantResponse: assistantResponse,
+            wasSuccessful: wasSuccessful
+        )
+
+        // Refresh published state
+        await refreshState()
+    }
+
+    // MARK: - Skill Gap Detection
+
+    /// Analyze an interaction for potential skill gaps and trigger acquisition if needed
+    private func analyzeForSkillGaps(
+        userMessage: String,
+        assistantResponse: String,
+        wasSuccessful: Bool
+    ) async {
+        guard let detector = skillGapDetector else { return }
+
+        // Build interaction analysis from the conversation exchange
+        let interaction = InteractionAnalysis(
+            description: "User: \(userMessage.prefix(100))...",
+            failure: wasSuccessful ? nil : InteractionFailure(
+                type: "conversation_failure",
+                suggestedDomain: nil
+            ),
+            userRequest: UserRequest(
+                type: categorizeRequest(userMessage),
+                wasSuccessful: wasSuccessful
+            ),
+            containsUncertainty: assistantResponse.lowercased().contains("i'm not sure") ||
+                                 assistantResponse.lowercased().contains("i don't know") ||
+                                 assistantResponse.lowercased().contains("uncertain"),
+            uncertaintyDomain: nil
+        )
+
+        // Analyze the interaction for skill gaps
+        if let gaps = await detector.analyzeInteraction(interaction) {
+            for gap in gaps where gap.severity == .high {
+                AppLogger.shared.log("Skill gap detected: \(gap.domain) - \(gap.evidence)", level: .info)
+                // Could trigger skill acquisition here in the future:
+                // try? await skillAcquisitionEngine?.acquireSkill(for: gap)
+            }
+
+            // Log medium severity gaps for awareness
+            for gap in gaps where gap.severity == .medium {
+                AppLogger.shared.log("Potential skill gap: \(gap.domain) - \(gap.evidence)", level: .debug)
+            }
+        }
+    }
+
+    /// Categorize a user request into a skill domain
+    private func categorizeRequest(_ message: String) -> String {
+        let lowerMessage = message.lowercased()
+
+        if lowerMessage.contains("code") || lowerMessage.contains("program") || lowerMessage.contains("function") {
+            return "code_assistance"
+        }
+        if lowerMessage.contains("file") || lowerMessage.contains("folder") || lowerMessage.contains("directory") {
+            return "file_operations"
+        }
+        if lowerMessage.contains("search") || lowerMessage.contains("find") || lowerMessage.contains("look up") {
+            return "search_operations"
+        }
+        if lowerMessage.contains("write") || lowerMessage.contains("compose") || lowerMessage.contains("draft") {
+            return "writing_assistance"
+        }
+        if lowerMessage.contains("explain") || lowerMessage.contains("what is") || lowerMessage.contains("how does") {
+            return "explanation"
+        }
+
+        return "general"
     }
 
     // MARK: - Convenience Accessors
