@@ -1124,6 +1124,12 @@ struct ChatView: View {
         .onChange(of: container.apiKeys) { _, _ in
             viewModel.updateProvider(container.createLLMProvider())
         }
+        .onChange(of: viewModel.isStreaming) { _, isStreaming in
+            // Restore focus to chat input when streaming completes
+            if !isStreaming {
+                isInputFocused = true
+            }
+        }
         .sheet(isPresented: $showWhiteboard) {
             WhiteboardView(isPresented: $showWhiteboard)
         }
