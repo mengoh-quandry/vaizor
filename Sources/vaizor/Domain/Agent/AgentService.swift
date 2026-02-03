@@ -50,6 +50,15 @@ class AgentService: ObservableObject {
     }
 
     private func initialize() async {
+        // Set up observation bindings first - these don't depend on other initialization
+        setupObservationBindings()
+
+        // Start observation immediately - this is independent of personal file/skills
+        isInitialized = true  // Set early so startObserving() guard passes
+        systemObserver.startObserving()
+        AppLogger.shared.log("Agent started observing system", level: .info)
+
+        // Initialize the rest (failures here won't block observation)
         do {
             // Initialize personal file manager (loads or creates agent identity)
             try await personalFileManager.initialize()
@@ -67,20 +76,13 @@ class AgentService: ObservableObject {
             // Initialize skill gap detector
             skillGapDetector = SkillGapDetector(personalFileManager: personalFileManager)
 
-            // Set up observation bindings
-            setupObservationBindings()
-
             // Load initial state
             await refreshState()
 
-            isInitialized = true
-            AppLogger.shared.log("Agent service initialized", level: .info)
-
-            // Auto-start system observation
-            startObserving()
+            AppLogger.shared.log("Agent service fully initialized", level: .info)
 
         } catch {
-            AppLogger.shared.log("Failed to initialize agent service: \(error)", level: .error)
+            AppLogger.shared.log("Agent service partial init failure (observation still active): \(error)", level: .warning)
         }
     }
 
