@@ -712,6 +712,9 @@ struct ContentView: View {
         ScrollView {
             VStack(spacing: VaizorSpacing.md) {
                 AgentStatusView(agentService: container.agentService)
+                SystemContextView(agentService: container.agentService)
+                RecentEventsView(agentService: container.agentService)
+                PendingProposalsView(agentService: container.agentService)
                 AgentNotificationsPanel(agentService: container.agentService)
             }
             .padding(.horizontal, 8)
