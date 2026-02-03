@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
-import GRDB
+import PostgresNIO
+
+// MARK: - Conversation Manager
+// PostgreSQL-backed conversation manager
 
 private actor TextAccumulator {
     private var value = ""
@@ -21,11 +24,11 @@ class ConversationManager: ObservableObject {
     @Published var templates: [ConversationTemplate] = []
 
     let conversationRepository = ConversationRepository()
-    private let folderRepository = FolderRepository()
-    private let templateRepository = TemplateRepository()
-    private let dbQueue = DatabaseManager.shared.dbQueue
+    private let postgres = PostgresManager.shared
+    private let pgRepo: PGConversationRepository
 
     init() {
+        self.pgRepo = PGConversationRepository(db: postgres)
         Task {
             await loadConversations()
             await loadFolders()
@@ -37,39 +40,34 @@ class ConversationManager: ObservableObject {
         await loadConversations(includeArchived: includeArchived)
     }
 
-    private func loadConversations(includeArchived: Bool = false, folderId: UUID? = nil) async {
+    private func loadConversations(includeArchived: Bool = false) async {
         do {
-            let loaded = try await dbQueue.read { db in
-                var query = ConversationRecord.order(Column("last_used_at").desc)
-                if !includeArchived {
-                    query = query.filter(Column("is_archived") == false)
-                }
-                if let folderId = folderId {
-                    query = query.filter(Column("folder_id") == folderId.uuidString)
-                }
-                return try query.fetchAll(db).map { $0.asModel() }
-            }
+            let loaded = try await pgRepo.fetchAll(includeArchived: includeArchived)
 
-            if loaded.isEmpty && !includeArchived && folderId == nil {
+            if loaded.isEmpty && !includeArchived {
                 let initial = Conversation()
-                try await dbQueue.write { db in
-                    try ConversationRecord(initial).insert(db)
-                }
+                try await pgRepo.save(initial)
                 conversations = [initial]
                 return
             }
 
             conversations = loaded
         } catch {
-            AppLogger.shared.logError(error, context: "Failed to load conversations")
+            AppLogger.shared.logError(error, context: "Failed to load conversations from PostgreSQL")
         }
     }
-    
+
     func archiveConversation(_ id: UUID, isArchived: Bool) {
         guard conversations.contains(where: { $0.id == id }) else { return }
         Task {
-            await conversationRepository.archiveConversation(id, isArchived: isArchived)
-            await reloadConversations()
+            do {
+                if isArchived {
+                    try await pgRepo.archive(id: id)
+                }
+                await reloadConversations()
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to archive conversation")
+            }
         }
     }
 
@@ -80,20 +78,17 @@ class ConversationManager: ObservableObject {
     func createConversation(title: String, systemPrompt: String? = nil) -> Conversation {
         let newConversation = Conversation(title: title)
 
-        // Write to database FIRST, then update in-memory state only on success
-        do {
-            try dbQueue.write { db in
-                try ConversationRecord(newConversation).insert(db)
+        Task {
+            do {
+                try await pgRepo.save(newConversation)
+                await MainActor.run {
+                    conversations.insert(newConversation, at: 0)
+                }
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to create conversation")
             }
-            // Only update in-memory state after successful database write
-            conversations.insert(newConversation, at: 0)
-        } catch {
-            AppLogger.shared.logError(error, context: "Failed to create conversation")
-            // Return the conversation anyway so caller has something to work with,
-            // but it won't be persisted. The error is logged.
         }
 
-        // If a system prompt is provided, set it in AppSettings
         if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
             Task { @MainActor in
                 AppSettings.shared.systemPromptPrefix = systemPrompt
@@ -104,26 +99,18 @@ class ConversationManager: ObservableObject {
     }
 
     func deleteConversation(_ id: UUID) {
-        // Delete from database FIRST, then update in-memory state only on success
         Task {
-            let success = await conversationRepository.deleteConversation(id)
-            if success {
-                // Only update in-memory state after successful database delete
+            do {
+                try await pgRepo.delete(id: id)
                 conversations.removeAll { $0.id == id }
 
-                // Ensure at least one conversation exists
                 if conversations.isEmpty {
                     let newConversation = Conversation()
-                    do {
-                        try await dbQueue.write { db in
-                            try ConversationRecord(newConversation).insert(db)
-                        }
-                        // Only add to in-memory after successful write
-                        conversations.append(newConversation)
-                    } catch {
-                        AppLogger.shared.logError(error, context: "Failed to create fallback conversation")
-                    }
+                    try await pgRepo.save(newConversation)
+                    conversations.append(newConversation)
                 }
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to delete conversation")
             }
         }
     }
@@ -131,8 +118,6 @@ class ConversationManager: ObservableObject {
     func updateLastUsed(_ id: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].lastUsedAt = Date()
-
-        // Re-sort by last used
         conversations.sort { $0.lastUsedAt > $1.lastUsedAt }
         updateConversation(conversations[index])
     }
@@ -154,20 +139,20 @@ class ConversationManager: ObservableObject {
         conversations[index].messageCount += 1
         updateConversation(conversations[index])
     }
-    
+
     func updateModelSettings(_ id: UUID, provider: LLMProvider?, model: String?) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].selectedProvider = provider
         conversations[index].selectedModel = model
         updateConversation(conversations[index])
     }
-    
+
     func updateFolder(_ id: UUID, folderId: UUID?) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].folderId = folderId
         updateConversation(conversations[index])
     }
-    
+
     func addTag(_ id: UUID, tag: String) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         if !conversations[index].tags.contains(tag) {
@@ -175,13 +160,13 @@ class ConversationManager: ObservableObject {
             updateConversation(conversations[index])
         }
     }
-    
+
     func removeTag(_ id: UUID, tag: String) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].tags.removeAll { $0 == tag }
         updateConversation(conversations[index])
     }
-    
+
     func toggleFavorite(_ id: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].isFavorite.toggle()
@@ -200,13 +185,7 @@ class ConversationManager: ObservableObject {
 
     func loadConversationsForProject(_ projectId: UUID) async -> [Conversation] {
         do {
-            return try await dbQueue.read { db in
-                try ConversationRecord
-                    .filter(Column("project_id") == projectId.uuidString)
-                    .order(Column("last_used_at").desc)
-                    .fetchAll(db)
-                    .map { $0.asModel() }
-            }
+            return try await pgRepo.fetchByProject(projectId: projectId)
         } catch {
             AppLogger.shared.logError(error, context: "Failed to load conversations for project \(projectId)")
             return []
@@ -214,70 +193,139 @@ class ConversationManager: ObservableObject {
     }
 
     private func updateConversation(_ conversation: Conversation) {
-        do {
-            try dbQueue.write { db in
-                try ConversationRecord(conversation).update(db)
+        Task {
+            do {
+                try await pgRepo.save(conversation)
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to update conversation \(conversation.id)")
             }
-        } catch {
-            AppLogger.shared.logError(error, context: "Failed to update conversation \(conversation.id)")
         }
     }
 
+    // MARK: - Folders
+
     private func loadFolders() async {
-        let loaded = await folderRepository.loadFolders()
-        folders = loaded
+        do {
+            let sql = "SELECT * FROM folders ORDER BY name"
+            let result = try await postgres.query(sql)
+            let rows = try await result.collect()
+
+            folders = try rows.map { row in
+                let columns = row.makeRandomAccess()
+                return Folder(
+                    id: try columns["id"].decode(UUID.self, context: .default),
+                    name: try columns["name"].decode(String?.self, context: .default) ?? "",
+                    color: try columns["color"].decode(String?.self, context: .default),
+                    parentId: try columns["parent_id"].decode(UUID?.self, context: .default),
+                    createdAt: try columns["created_at"].decode(Date?.self, context: .default) ?? Date()
+                )
+            }
+        } catch {
+            AppLogger.shared.logError(error, context: "Failed to load folders")
+        }
     }
 
     func createFolder(name: String, color: String?) {
         let folder = Folder(name: name, color: color)
         Task {
-            let success = await folderRepository.saveFolder(folder)
-            if success {
-                // Only update in-memory state after successful database write
-                folders.append(folder)
+            do {
+                let colorValue = color.map { "'\($0)'" } ?? "NULL"
+                let sql = """
+                    INSERT INTO folders (id, name, color, created_at)
+                    VALUES (
+                        '\(folder.id.uuidString)',
+                        '\(name.replacingOccurrences(of: "'", with: "''"))',
+                        \(colorValue),
+                        NOW()
+                    )
+                """
+                try await postgres.execute(sql)
+                await loadFolders()
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to create folder")
             }
-            await loadFolders()
         }
     }
 
     func deleteFolder(_ id: UUID) {
         Task {
-            let success = await folderRepository.deleteFolder(id)
-            if success {
-                // Only update in-memory state after successful database delete
-                folders.removeAll { $0.id == id }
+            do {
+                try await postgres.execute("DELETE FROM folders WHERE id = '\(id.uuidString)'")
+                await loadFolders()
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to delete folder")
             }
-            await loadFolders()
         }
     }
 
+    // MARK: - Templates
+
     private func loadTemplates() async {
-        let loaded = await templateRepository.loadTemplates()
-        templates = loaded
+        do {
+            let sql = "SELECT * FROM conversation_templates ORDER BY name"
+            let result = try await postgres.query(sql)
+            let rows = try await result.collect()
+
+            templates = try rows.map { row in
+                let columns = row.makeRandomAccess()
+                return ConversationTemplate(
+                    id: try columns["id"].decode(UUID.self, context: .default),
+                    name: try columns["name"].decode(String?.self, context: .default) ?? "",
+                    prompt: try columns["prompt"].decode(String?.self, context: .default) ?? "",
+                    systemPrompt: try columns["system_prompt"].decode(String?.self, context: .default)
+                )
+            }
+        } catch {
+            AppLogger.shared.logError(error, context: "Failed to load templates")
+        }
     }
 
     func createTemplate(name: String, prompt: String, systemPrompt: String?) {
         let template = ConversationTemplate(name: name, prompt: prompt, systemPrompt: systemPrompt)
         Task {
-            let success = await templateRepository.saveTemplate(template)
-            if success {
-                // Only update in-memory state after successful database write
-                templates.append(template)
+            do {
+                let systemPromptValue = systemPrompt.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" } ?? "NULL"
+                let sql = """
+                    INSERT INTO conversation_templates (id, name, prompt, system_prompt, created_at)
+                    VALUES (
+                        '\(template.id.uuidString)',
+                        '\(name.replacingOccurrences(of: "'", with: "''"))',
+                        '\(prompt.replacingOccurrences(of: "'", with: "''"))',
+                        \(systemPromptValue),
+                        NOW()
+                    )
+                """
+                try await postgres.execute(sql)
+                await loadTemplates()
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to create template")
             }
-            await loadTemplates()
         }
     }
 
     func deleteTemplate(_ id: UUID) {
         Task {
-            let success = await templateRepository.deleteTemplate(id)
-            if success {
-                // Only update in-memory state after successful database delete
-                templates.removeAll { $0.id == id }
+            do {
+                try await postgres.execute("DELETE FROM conversation_templates WHERE id = '\(id.uuidString)'")
+                await loadTemplates()
+            } catch {
+                AppLogger.shared.logError(error, context: "Failed to delete template")
             }
-            await loadTemplates()
         }
     }
+
+    // MARK: - Search
+
+    func searchConversations(query: String) async -> [Conversation] {
+        do {
+            return try await pgRepo.search(query: query)
+        } catch {
+            AppLogger.shared.logError(error, context: "Failed to search conversations")
+            return []
+        }
+    }
+
+    // MARK: - Title Generation
 
     func generateTitleAndSummary(
         for conversationId: UUID,
@@ -285,7 +333,6 @@ class ConversationManager: ObservableObject {
         firstResponse: String,
         provider: any LLMProviderProtocol
     ) async {
-        // Generate title using the provided provider
         let titlePrompt = "Based on this conversation, generate a concise 3-5 word title that captures the main topic. Only return the title, nothing else. No quotes, no punctuation at the end.\n\nUser: \(firstMessage)\nAssistant: \(firstResponse)"
 
         var title = generateFallbackTitle(from: firstMessage)
@@ -294,7 +341,7 @@ class ConversationManager: ObservableObject {
             try await provider.streamMessage(
                 titlePrompt,
                 configuration: LLMConfiguration(
-                    provider: .ollama, // Will be overridden by provider
+                    provider: .ollama,
                     model: "",
                     temperature: 0.3,
                     maxTokens: 30
@@ -314,7 +361,6 @@ class ConversationManager: ObservableObject {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 .replacingOccurrences(of: "\n", with: " ")
 
-            // Only use generated title if it's reasonable
             if cleaned.count >= 3 && cleaned.count <= 60 && !cleaned.lowercased().contains("title") {
                 title = cleaned
             }
@@ -322,7 +368,6 @@ class ConversationManager: ObservableObject {
             AppLogger.shared.log("Error generating title, using fallback: \(error)", level: .warning)
         }
 
-        // Generate summary
         let summaryPrompt = "Summarize the following conversation in exactly 1 short sentence. Be concise and capture the key point. Only output the summary, nothing else.\n\nUser: \(firstMessage)\nAssistant: \(firstResponse)"
 
         var summary = ""
@@ -355,29 +400,24 @@ class ConversationManager: ObservableObject {
         updateSummary(conversationId, summary: summary)
     }
 
-    /// Generate a fallback title from the first message if LLM fails
     private func generateFallbackTitle(from message: String) -> String {
         let cleaned = message
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
 
-        // Extract first meaningful words
         let words = cleaned.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
 
         if words.isEmpty {
             return "New Chat"
         }
 
-        // Take first 5 words max
         let titleWords = Array(words.prefix(5))
         var title = titleWords.joined(separator: " ")
 
-        // Truncate if too long
         if title.count > 40 {
             title = String(title.prefix(37)) + "..."
         }
 
-        // Capitalize first letter
         return title.prefix(1).uppercased() + title.dropFirst()
     }
 }

@@ -163,8 +163,7 @@ struct ThinkingIndicator: View {
             Bundle.main.bundlePath + "/../../Resources/Icons/Vaizor.png",
             Bundle.main.bundlePath + "/Resources/Icons/Vaizor.png",
             Bundle.main.resourcePath.map { $0 + "/Resources/Icons/Vaizor.png" },
-            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/Vaizor.png" },
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/Vaizor.png"
+            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/Vaizor.png" }
         ].compactMap { $0 }
 
         for path in possiblePaths {

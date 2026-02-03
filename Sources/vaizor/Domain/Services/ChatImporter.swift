@@ -473,8 +473,8 @@ class ChatImporter: ObservableObject {
 
     /// Save imported conversations to the database
     func saveToDatabase(_ result: ImportResult) async throws {
-        let dbQueue = DatabaseManager.shared.dbQueue
-        let repo = ConversationRepository(dbQueue: dbQueue)
+        let repo = ConversationRepository()
+        let pgRepo = PGConversationRepository(db: PostgresManager.shared)
 
         for imported in result.conversations {
             // Create conversation
@@ -487,10 +487,8 @@ class ChatImporter: ObservableObject {
                 messageCount: imported.messages.count
             )
 
-            // Save conversation to database
-            try await dbQueue.write { db in
-                try ConversationRecord(conversation).insert(db)
-            }
+            // Save conversation to PostgreSQL
+            try await pgRepo.save(conversation)
 
             // Add messages
             for importedMsg in imported.messages {

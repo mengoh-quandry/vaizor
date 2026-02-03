@@ -52,6 +52,9 @@ class SystemObserver: ObservableObject {
         fileSystemObserver = FileSystemObserver(delegate: self)
         messagesObserver = MessagesObserver(delegate: self)
 
+        // Configure file system observer with default paths (Desktop only, no Downloads to avoid permission prompts)
+        fileSystemObserver?.configureDefaultPaths(includeDownloads: false)
+
         // Start specialist observers
         browserObserver?.startObserving()
         fileSystemObserver?.startObserving()

@@ -232,10 +232,6 @@ struct ArtifactWebView: NSViewRepresentable {
         let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
         possiblePaths.append(cwd.appendingPathComponent("Resources/js"))
 
-        // 4. Known development paths as fallback
-        possiblePaths.append(URL(fileURLWithPath: "/Users/marcus/Downloads/vaizor/Resources/js"))
-        possiblePaths.append(URL(fileURLWithPath: "/Users/marcus/.cursor/worktrees/vaizor/slq/Resources/js"))
-
         // Log what we're searching
         AppLogger.shared.log("Searching for JS libraries in \(possiblePaths.count) locations...", level: .debug)
 

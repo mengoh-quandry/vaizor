@@ -140,8 +140,11 @@ class ChatViewModel: ObservableObject {
     // Observer for context enhancement notifications
     private var contextEnhancedObserver: NSObjectProtocol?
 
-    // Agent service for recording interactions
+    // Agent service for recording interactions and dynamic prompts
     private weak var agentService: AgentService?
+
+    // Cached agent system prompt (refreshed per conversation)
+    private var agentSystemPrompt: String?
 
     init(conversationId: UUID, conversationRepository: ConversationRepository, container: DependencyContainer? = nil) {
         self.conversationId = conversationId
@@ -229,17 +232,22 @@ class ChatViewModel: ObservableObject {
         self.projectId = projectId
     }
 
-    /// Build enhanced system prompt with project context
+    /// Build enhanced system prompt with project context and agent identity
     func buildSystemPromptWithProjectContext(basePrompt: String?) -> String? {
-        guard let context = projectContext else {
-            return basePrompt
-        }
-
+        // Start with agent's dynamic system prompt if available, otherwise use base
         var components: [String] = []
 
-        // Add base system prompt if provided
-        if let base = basePrompt, !base.isEmpty {
+        // Add agent system prompt (takes precedence as core identity)
+        if let agentPrompt = agentSystemPrompt, !agentPrompt.isEmpty {
+            components.append(agentPrompt)
+        } else if let base = basePrompt, !base.isEmpty {
+            // Fallback to base prompt if no agent prompt
             components.append(base)
+        }
+
+        // Layer project context on top
+        guard let context = projectContext else {
+            return components.isEmpty ? basePrompt : components.joined(separator: "\n")
         }
 
         // Add project system prompt
@@ -277,6 +285,49 @@ class ChatViewModel: ObservableObject {
         }
 
         return components.joined(separator: "\n")
+    }
+
+    /// Refresh the agent's system prompt from the current PersonalFile
+    func refreshAgentSystemPrompt() async {
+        guard let agent = agentService else {
+            agentSystemPrompt = nil
+            return
+        }
+
+        // Get available tools from MCP if available
+        let tools: [ToolInfo] = SystemPrompts.builtInTools
+
+        agentSystemPrompt = await agent.generateSystemPrompt(
+            tools: tools,
+            includeArtifactGuidelines: true,
+            customInstructions: nil
+        )
+        AppLogger.shared.log("Agent system prompt refreshed", level: .debug)
+    }
+
+    // MARK: - Agent Greeting
+
+    /// Check if the agent should greet the user and send a greeting message
+    func checkAndSendAgentGreeting() async {
+        guard let agent = agentService else { return }
+
+        // Check if we should greet
+        let shouldGreet = await agent.shouldGreetUser(conversationMessageCount: messages.count)
+        guard shouldGreet else { return }
+
+        // Generate and add the greeting as an assistant message
+        let greeting = await agent.generateGreeting()
+
+        let greetingMessage = Message(
+            conversationId: conversationId,
+            role: .assistant,
+            content: greeting.fullGreeting
+        )
+
+        messages.append(greetingMessage)
+        await conversationRepository.saveMessage(greetingMessage)
+
+        AppLogger.shared.log("Agent sent greeting: \(greeting.salutation)", level: .info)
     }
 
     /// Get file contents from project context for injection into conversation
@@ -404,6 +455,9 @@ class ChatViewModel: ObservableObject {
 
         // Cancel any existing stream
         stopStreaming()
+
+        // Refresh agent system prompt before each message
+        await refreshAgentSystemPrompt()
 
         // Security: Check for prompt injection attempts (legacy detector)
         let injectionDetector = PromptInjectionDetector.shared
@@ -703,16 +757,14 @@ class ChatViewModel: ObservableObject {
                     )
                 }
 
-                // Record interaction for agent memory
+                // Process conversation exchange for agent learning
                 if let agent = self.agentService, let userMsg = messages.last(where: { $0.role == .user }) {
-                    let summary = "User asked about: \(userMsg.content.prefix(100))..."
-                    await agent.recordInteraction(
-                        summary: summary,
-                        outcome: .successful,
-                        lessonsLearned: []
+                    await agent.processConversationExchange(
+                        userMessage: userMsg.content,
+                        assistantResponse: finalContent,
+                        wasSuccessful: true,
+                        topics: []  // TODO: Extract topics from conversation
                     )
-                    // Update mood positively on successful interaction
-                    await agent.updateMood(valence: 0.1, arousal: 0.0, emotion: nil)
                 }
 
                 // Clear replace index and redaction state after use
@@ -733,15 +785,14 @@ class ChatViewModel: ObservableObject {
                 activeToolCalls = []
                 activeRedactionMap = [:]
 
-                // Record failed interaction for agent learning
-                if let agent = self.agentService {
-                    await agent.recordInteraction(
-                        summary: "Failed interaction: \(error.localizedDescription)",
-                        outcome: .challenging,
-                        lessonsLearned: ["Error occurred: \(error.localizedDescription)"]
+                // Process failed interaction for agent learning
+                if let agent = self.agentService, let userMsg = self.messages.last(where: { $0.role == .user }) {
+                    await agent.processConversationExchange(
+                        userMessage: userMsg.content,
+                        assistantResponse: "Error: \(error.localizedDescription)",
+                        wasSuccessful: false,
+                        topics: []
                     )
-                    // Update mood negatively on failure
-                    await agent.updateMood(valence: -0.1, arousal: 0.1, emotion: "concern")
                 }
             }
         }

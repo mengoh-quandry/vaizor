@@ -933,6 +933,9 @@ struct ChatView: View {
                 if selectedModel.isEmpty {
                     selectedModel = container.availableModels.first ?? container.currentProvider.defaultModels.first ?? ""
                 }
+
+                // Check if agent should greet the user
+                await viewModel.checkAndSendAgentGreeting()
             }
             // Auto-focus the text field
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

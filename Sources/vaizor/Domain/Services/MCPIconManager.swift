@@ -23,8 +23,7 @@ struct MCPIconManager {
             Bundle.main.bundlePath + "/../../Resources/Icons/mcp.png",
             Bundle.main.bundlePath + "/Resources/Icons/mcp.png",
             Bundle.main.resourcePath.map { $0 + "/Resources/Icons/mcp.png" },
-            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/mcp.png" },
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/mcp.png"
+            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/mcp.png" }
         ].compactMap { $0 }
         
         for mcpPath in possiblePaths {

@@ -28,8 +28,7 @@ struct ProviderIconManager {
             Bundle.main.path(forResource: resourceName, ofType: fileExtension),
             Bundle.main.path(forResource: resourceName, ofType: fileExtension, inDirectory: "Resources/Icons"),
             Bundle.main.resourcePath?.appending("/../../Resources/Icons/\(resourceName).\(fileExtension)"),
-            Bundle.main.resourcePath?.appending("/Resources/Icons/\(resourceName).\(fileExtension)"),
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/\(resourceName).\(fileExtension)"
+            Bundle.main.resourcePath?.appending("/Resources/Icons/\(resourceName).\(fileExtension)")
         ]
         
         for path in possiblePaths {

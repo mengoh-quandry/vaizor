@@ -11,6 +11,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
     case privacy = "Privacy"
     case security = "Security"
+    case storage = "Storage"
     case shortcuts = "Shortcuts"
     case about = "About"
 
@@ -26,6 +27,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "paintbrush"
         case .privacy: return "lock.shield"
         case .security: return "shield.checkered"
+        case .storage: return "cylinder.split.1x2"
         case .shortcuts: return "keyboard"
         case .about: return "info.circle"
         }
@@ -85,6 +87,8 @@ struct ComprehensiveSettingsView: View {
             return ["redaction", "history", "clear", "cost", "tokens", "data", "cache"]
         case .security:
             return ["edr", "threat", "detection", "audit", "logging", "host", "firewall", "alert", "injection", "malware"]
+        case .storage:
+            return ["postgresql", "postgres", "database", "migration", "sqlite", "storage", "backup"]
         case .shortcuts:
             return ["keyboard", "shortcut", "hotkey", "key"]
         case .about:
@@ -303,6 +307,8 @@ struct ComprehensiveSettingsView: View {
                         PrivacySettingsView()
                     case .security:
                         SecuritySettingsView()
+                    case .storage:
+                        PostgreSQLSettingsView()
                     case .shortcuts:
                         ShortcutsSettingsView()
                     case .about:
@@ -334,6 +340,8 @@ struct ComprehensiveSettingsView: View {
             return "Manage your data and privacy"
         case .security:
             return "AI Endpoint Detection & Response"
+        case .storage:
+            return "Configure PostgreSQL storage and migration"
         case .shortcuts:
             return "View and customize keyboard shortcuts"
         case .about:

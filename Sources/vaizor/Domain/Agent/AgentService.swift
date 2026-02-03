@@ -318,6 +318,99 @@ class AgentService: ObservableObject {
         return await actionExecutor.execute(action)
     }
 
+    // MARK: - Greeting Generation
+
+    /// Generate a personalized greeting for a new session
+    func generateGreeting() async -> AgentGreeting {
+        let personalFile = await personalFileManager.getPersonalFile()
+        return GreetingGenerator.generateGreeting(from: personalFile)
+    }
+
+    /// Check if we should greet the user (new session, returning user, etc.)
+    func shouldGreetUser(conversationMessageCount: Int) async -> Bool {
+        // Always greet on empty conversations
+        if conversationMessageCount == 0 {
+            return true
+        }
+
+        // Check if it's been a while since last interaction
+        let lastInteraction = await personalFileManager.getPersonalFile().lastInteraction
+        let hoursSinceLast = Date().timeIntervalSince(lastInteraction) / 3600
+
+        // Greet if more than 4 hours since last interaction and conversation is fresh
+        return hoursSinceLast > 4 && conversationMessageCount < 3
+    }
+
+    // MARK: - System Prompt Generation
+
+    /// Generate a dynamic system prompt based on the agent's current PersonalFile
+    func generateSystemPrompt(
+        tools: [ToolInfo] = [],
+        includeArtifactGuidelines: Bool = true,
+        customInstructions: String? = nil
+    ) async -> String {
+        let personalFile = await personalFileManager.getPersonalFile()
+        return DynamicSystemPromptBuilder.buildSystemPrompt(
+            from: personalFile,
+            tools: tools,
+            includeArtifactGuidelines: includeArtifactGuidelines,
+            customInstructions: customInstructions
+        )
+    }
+
+    /// Get the agent's current PersonalFile for direct access
+    func getPersonalFile() async -> PersonalFile {
+        return await personalFileManager.getPersonalFile()
+    }
+
+    // MARK: - Post-Conversation Updates
+
+    /// Process a completed conversation exchange to update agent memory and state
+    func processConversationExchange(
+        userMessage: String,
+        assistantResponse: String,
+        wasSuccessful: Bool,
+        topics: [String] = []
+    ) async {
+        // Update recent topics
+        var currentTopics = await personalFileManager.getPersonalFile().memory.recentTopics
+        for topic in topics where !currentTopics.contains(topic) {
+            currentTopics.insert(topic, at: 0)
+        }
+        await personalFileManager.updateRecentTopics(Array(currentTopics.prefix(10)))
+
+        // Record the interaction
+        let summary = "User: \(userMessage.prefix(100))... | Response: \(assistantResponse.prefix(100))..."
+        let outcome: EpisodeOutcome = wasSuccessful ? .successful : .challenging
+
+        await personalFileManager.recordEpisode(Episode(
+            summary: summary,
+            emotionalTone: currentMood,
+            outcome: outcome,
+            lessonsLearned: []
+        ))
+
+        // Update trust based on success
+        if wasSuccessful {
+            await personalFileManager.updateRelationshipTrust(delta: 0.01)
+            await personalFileManager.updateMood(adjustment: PersonalFileManager.EmotionalAdjustment(
+                valence: 0.05,
+                arousal: 0.0
+            ))
+        }
+
+        // Increment message count
+        await personalFileManager.incrementMessageCount()
+
+        // Refresh published state
+        await refreshState()
+    }
+
+    /// Learn a preference from conversation context
+    func learnPreferenceFromConversation(key: String, value: String, confidence: Float = 0.7) async {
+        await personalFileManager.setUserPreference(key: key, value: value, confidence: confidence)
+    }
+
     // MARK: - Convenience Accessors
 
     var activityLevel: Float {

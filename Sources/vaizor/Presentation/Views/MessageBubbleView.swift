@@ -225,8 +225,7 @@ struct MessageBubbleView: View {
             Bundle.main.bundlePath + "/../../Resources/Icons/ollama.jpeg",
             Bundle.main.bundlePath + "/Resources/Icons/ollama.jpeg",
             Bundle.main.resourcePath.map { $0 + "/Resources/Icons/ollama.jpeg" },
-            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/ollama.jpeg" },
-            "/Users/marcus/Downloads/vaizor/Resources/Icons/ollama.jpeg"
+            Bundle.main.resourcePath.map { $0 + "/../../Resources/Icons/ollama.jpeg" }
         ].compactMap { $0 }
 
         if let ollamaPath = possiblePaths.first(where: { fileManager.fileExists(atPath: $0) }),

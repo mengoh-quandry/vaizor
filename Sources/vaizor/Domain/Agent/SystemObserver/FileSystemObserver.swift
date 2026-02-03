@@ -15,15 +15,27 @@ class FileSystemObserver {
     private var recentFileEvents: [String: Date] = [:]
     private let deduplicationWindow: TimeInterval = 2.0
 
-    // Default paths to watch
-    private static let defaultWatchPaths = [
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path,
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path
-    ]
+    // Default paths to watch - computed lazily to avoid triggering permissions on init
+    private static var defaultWatchPaths: [String] {
+        [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path
+            // Note: Downloads requires explicit user permission - only add when user enables observation
+        ]
+    }
 
     init(delegate: SystemObserverDelegate?) {
         self.delegate = delegate
-        self.watchedPaths = Self.defaultWatchPaths
+        // Start with empty paths - user must explicitly enable observation
+        self.watchedPaths = []
+    }
+
+    /// Configure default watch paths when user enables observation
+    func configureDefaultPaths(includeDownloads: Bool = false) {
+        watchedPaths = Self.defaultWatchPaths
+        if includeDownloads {
+            let downloadsPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
+            watchedPaths.append(downloadsPath)
+        }
     }
 
     // MARK: - Configuration

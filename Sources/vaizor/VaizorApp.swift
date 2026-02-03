@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import KeychainAccess
 
 extension Notification.Name {
     static let toggleSettings = Notification.Name("toggleSettings")
@@ -37,6 +38,75 @@ struct VaizorApp: App {
     init() {
         // Initialize logging
         AppLogger.shared.log("Vaizor app starting", level: .info)
+
+        // Initialize all systems
+        Task {
+            await Self.initializePostgreSQL()
+            await Self.initializeAgentSystem()
+        }
+    }
+
+    private static func initializeAgentSystem() async {
+        do {
+            // Initialize the personal file (agent identity)
+            try await PersonalFileManager.shared.initialize()
+            AppLogger.shared.log("Agent PersonalFile initialized", level: .info)
+
+            // Load installed skills
+            let skillLoader = SkillLoader()
+            try await skillLoader.loadAllSkills()
+            AppLogger.shared.log("Loaded \(skillLoader.skillCount) skills", level: .info)
+
+            // Initialize skill package manager
+            let skillManager = SkillPackageManager()
+            try await skillManager.loadAllSkills()
+            AppLogger.shared.log("SkillPackageManager ready", level: .info)
+
+        } catch {
+            AppLogger.shared.log("Agent system initialization failed: \(error.localizedDescription)", level: .warning)
+        }
+    }
+
+    private static func initializePostgreSQL() async {
+        let defaults = UserDefaults.standard
+        guard let host = defaults.string(forKey: "postgres.host"),
+              let portString = defaults.string(forKey: "postgres.port"),
+              let port = Int(portString),
+              let database = defaults.string(forKey: "postgres.database"),
+              let username = defaults.string(forKey: "postgres.username") else {
+            AppLogger.shared.log("PostgreSQL settings not configured - using defaults", level: .info)
+            // Try default local configuration
+            do {
+                try await PostgresManager.shared.configure(with: .local)
+                try await PostgresManager.shared.runMigrations()
+                AppLogger.shared.log("PostgreSQL connected with local defaults", level: .info)
+            } catch {
+                AppLogger.shared.log("PostgreSQL auto-connect failed: \(error.localizedDescription)", level: .warning)
+            }
+            return
+        }
+
+        // Load password from Keychain
+        let keychain = Keychain(service: "com.quandrylabs.vaizor")
+        let password = try? keychain.get("postgres.password") ?? ""
+        let useTLS = defaults.bool(forKey: "postgres.tls")
+
+        let config = PostgresManager.PostgresConfig(
+            host: host,
+            port: port,
+            username: username,
+            password: password ?? "",
+            database: database,
+            tls: useTLS
+        )
+
+        do {
+            try await PostgresManager.shared.configure(with: config)
+            try await PostgresManager.shared.runMigrations()
+            AppLogger.shared.log("PostgreSQL connected to \(host):\(port)/\(database)", level: .info)
+        } catch {
+            AppLogger.shared.log("PostgreSQL auto-connect failed: \(error.localizedDescription)", level: .warning)
+        }
     }
 
     var body: some Scene {
