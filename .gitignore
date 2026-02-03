@@ -29,3 +29,6 @@ Carthage/Build/
 
 # Build artifacts
 *.app
+
+# Git Worktrees
+.worktrees/
